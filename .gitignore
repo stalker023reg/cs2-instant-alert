@@ -1,0 +1,110 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.egg-info/
+*.egg
+dist/
+build/
+.eggs/
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Environment / Secrets
+.env
+.env.local
+.env.production
+vps_env.txt
+
+# Logs
+logs/
+*.log
+logs_output.txt
+recent_logs.txt
+output.log
+search_results.txt
+search_filtered.txt
+tg_results.txt
+sendMessage.txt
+
+# Database
+*.db
+*.sqlite3
+
+# Docker
+docker/postgres/data/
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Testing
+.coverage
+htmlcov/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Archives
+*.tar.gz
+
+# Agent / AI config (not part of project)
+.agents/
+.claude/
+.mcp.json
+skills-lock.json
+
+# Scratch / debug / deploy scripts (one-off helpers)
+add_cs2.py
+check_*.py
+cleanup_deploy.py
+container_history.py
+deploy.py
+deploy_fixes.py
+deploy_full.py
+deploy_notification_fix.py
+exec_cs2.py
+fast_upload_and_restart.py
+fetch_logs.py
+fetch_steam_news.py
+final_deploy.py
+fix_*.py
+get_env.py
+migrate_db.py
+query_db.py
+rebuild_container.py
+recreate_bot.py
+recreate_migrations.py
+recreate_migrations2.py
+redeploy.py
+remove_vps_bot.py
+replace.py
+reproduce.py
+run_migrations.py
+scratch_*.py
+search_logs.py
+search_tg_logs.py
+send_test.py
+ssh_deploy.py
+test_cdn.py
+test_deepl.py
+test_formatter.py
+test_manifest.py
+test_regex.py
+test_row.py
+test_supabase.py
+test_vps_conn.py
+trigger.py
+upload_*.py

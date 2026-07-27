@@ -1,0 +1,23 @@
+# ════════════════════════════════════════════════════════════════
+# CS2 Instant Alert — Default Settings
+# ════════════════════════════════════════════════════════════════
+
+[monitoring]
+default_check_interval_seconds = 5
+race_mode_interval_seconds = 2
+race_mode_duration_minutes = 30
+cross_validation_min_sources = 2
+
+[notifications]
+retry_intervals_seconds = [30, 60, 120]
+max_retry_duration_seconds = 3600
+patch_notes_poll_interval_seconds = 30
+patch_notes_poll_duration_seconds = 7200
+
+[telegram]
+max_messages_per_second = 30
+max_messages_per_chat_per_minute = 20
+
+[defaults]
+language = "ru"
+timezone = "Europe/Moscow"

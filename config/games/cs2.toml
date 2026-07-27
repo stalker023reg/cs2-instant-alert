@@ -1,0 +1,28 @@
+# ════════════════════════════════════════════════════════════════
+# CS2 Instant Alert — Counter-Strike 2 Monitor Configuration
+# ════════════════════════════════════════════════════════════════
+
+[game]
+name = "Counter-Strike 2"
+steam_app_id = 730
+slug = "cs2"
+icon_url = "https://cdn.cloudflare.steamstatic.com/steam/apps/730/header.jpg"
+
+[monitor]
+# Branches to monitor
+branches = ["public"]
+
+# Patch notes sources
+patch_notes_url = "https://www.counter-strike.net/news/updates"
+news_feed_app_id = 730  # For ISteamNews/GetNewsForApp
+
+# Monitoring intervals (can override global defaults)
+# check_interval_seconds = 5
+# race_mode_interval_seconds = 2
+# race_mode_duration_minutes = 30
+
+[depot]
+# CS2 depot IDs to track
+# 731 = CS2 client content
+# 2347771 = CS2 additional content
+tracked_depots = [731, 2347771]

@@ -1,0 +1,33 @@
+# ════════════════════════════════════════════════════════════════
+# CS2 Instant Alert — Game Monitor Configuration Template
+#
+# To add a new game:
+# 1. Copy this file to config/games/<slug>.toml
+# 2. Fill in the game details
+# 3. Add a row to the 'games' database table
+# 4. Restart the application
+# ════════════════════════════════════════════════════════════════
+
+[game]
+name = "Game Name"
+steam_app_id = 0        # Steam Application ID
+slug = "game-slug"      # URL-friendly identifier (lowercase, hyphens)
+icon_url = ""           # URL to game icon/header image
+
+[monitor]
+# Steam branches to monitor for updates
+branches = ["public"]
+
+# Patch notes configuration (optional)
+# patch_notes_url = ""
+# news_feed_app_id = 0
+
+# Override global monitoring intervals (optional)
+# check_interval_seconds = 5
+# race_mode_interval_seconds = 2
+# race_mode_duration_minutes = 30
+
+[depot]
+# Steam depot IDs to track for this game
+# Find depot IDs at https://steamdb.info/app/<APP_ID>/depots/
+tracked_depots = []
