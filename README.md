@@ -101,6 +101,12 @@ config/
 │   └── cs2.toml      # Game-specific monitoring configuration
 ```
 
+## Changelog
+
+### v1.0.1
+- **Fix:** Fixed an issue where patch note subheadings (e.g. Map names) would incorrectly merge into the same line as the following list item.
+- **Fix:** Added a cleanup step to the translation service to fix a bug where DeepL's HTML tag handling would inappropriately inject newlines before closing parentheses in patch note links.
+
 ## Setup
 
 ### Prerequisites
