@@ -58,6 +58,12 @@ class TranslationService:
                 preserve_formatting=True,
             )
             translated = str(result)
+            
+            # DeepL sometimes inserts extra newlines before closing parentheses or brackets
+            # when using HTML tag handling. Clean these up.
+            translated = translated.replace("\n)", ")").replace("\n]", "]")
+            translated = translated.replace(" \n", " ").replace("\n ", "\n")
+            
             await logger.ainfo(
                 "patch_notes_translated",
                 original_len=len(text),
