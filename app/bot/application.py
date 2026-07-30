@@ -49,9 +49,9 @@ def build_application(container: Container) -> Application | None:
     application.add_handler(CommandHandler("start", handle_start))
     application.add_handler(CallbackQueryHandler(route_callback))
 
-    # Add catch-all handler for any other messages/commands so the bot doesn't seem unresponsive
-    application.add_handler(MessageHandler(filters.ALL & ~filters.COMMAND, handle_unknown_message))
-    application.add_handler(MessageHandler(filters.COMMAND, handle_unknown_message))
+    # Add catch-all handler for any other messages/commands so the bot doesn't seem unresponsive (only in private chats)
+    application.add_handler(MessageHandler(filters.ChatType.PRIVATE & filters.ALL & ~filters.COMMAND, handle_unknown_message))
+    application.add_handler(MessageHandler(filters.ChatType.PRIVATE & filters.COMMAND, handle_unknown_message))
 
     # Глобальный error handler — без него ошибки теряются
     application.add_error_handler(_error_handler)
