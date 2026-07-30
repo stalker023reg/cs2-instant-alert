@@ -134,8 +134,9 @@ def format_steam_patchnotes_html(raw_text: str, max_length: int = 3500) -> str:
     text = raw_text
 
     # ── 1. Convert [url=...] tags to HTML links ──
+    # Strip escaped quotes from URL values before converting
     text = re.sub(
-        r'\[url=?"?(.*?)"?\](.*?)\[/url\]',
+        r'\[url=\\?"?(.*?)\\?"?\](.*?)\[/url\]',
         r'<a href="\1">\2</a>',
         text,
         flags=re.IGNORECASE | re.DOTALL,
@@ -173,7 +174,7 @@ def format_steam_patchnotes_html(raw_text: str, max_length: int = 3500) -> str:
         name = m.group(1).strip()
         if not name or len(name) > 60:
             return m.group(0)  # Not a subheading, leave as-is
-        return f"\n<b>{name}</b>"
+        return f"\n<b>{name}</b>\n"
 
     text = re.sub(r'\[p\]([^[\]]{1,60})\[/p\](?=\s*\[list\])', _replace_subheading, text)
 
