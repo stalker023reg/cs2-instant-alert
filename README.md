@@ -103,6 +103,9 @@ config/
 
 ## Changelog
 
+### v1.0.2
+- **Fix:** Restricted catch-all message handlers (which reply with standard text) to private chats only. This prevents the bot from spamming responses to every user message in group chats.
+
 ### v1.0.1
 - **Fix:** Fixed an issue where patch note subheadings (e.g. Map names) would incorrectly merge into the same line as the following list item.
 - **Fix:** Added a cleanup step to the translation service to fix a bug where DeepL's HTML tag handling would inappropriately inject newlines before closing parentheses in patch note links.
