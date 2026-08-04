@@ -103,6 +103,10 @@ config/
 
 ## Changelog
 
+### v1.0.3
+- **Fix:** Rewrote DeepL post-translation cleanup with regex to aggressively remove stray newlines before/after parentheses and inside `<a>` link tags. This fully resolves the issue where translated patch note links had misplaced line breaks around brackets.
+- **Fix:** Bot no longer sends any unsolicited replies to unknown messages. Previously it would respond with a hint text and admin dashboard on every unrecognized message — now it stays completely silent and only reacts to `/start` and inline button callbacks.
+
 ### v1.0.2
 - **Fix:** Restricted catch-all message handlers (which reply with standard text) to private chats only. This prevents the bot from spamming responses to every user message in group chats.
 
