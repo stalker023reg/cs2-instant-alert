@@ -165,37 +165,5 @@ async def show_main_menu(update: Update, context: CallbackContext) -> None:
 
 
 async def handle_unknown_message(update: Update, context: CallbackContext) -> None:
-    """Handles any unknown text command or message by sending the main menu."""
-    if not update.message:
-        return
-        
-    container: Container = context.application.bot_data["container"]
-    chat_id = update.effective_chat.id
-    
-    is_admin = False
-    async with container.db_manager().session() as session:
-        from app.repositories.user_repository import UserRepository
-        user_repo = UserRepository(session)
-        user = await user_repo.get_by_telegram_id(chat_id)
-        if user:
-            is_admin = user.is_admin
-            
-    if not is_admin:
-        try:
-            await update.message.reply_text(
-                "Бот работает в режиме автоматических уведомлений. Ожидайте выхода новых патчей!"
-            )
-        except Exception:
-            pass
-        return
-    
-    # Optional: Send a brief hint before sending the menu
-    try:
-        await update.message.reply_text(
-            "Пожалуйста, используйте кнопки меню или команду /start для взаимодействия с ботом."
-        )
-    except Exception:
-        pass
-        
-    # Re-send the main menu
-    await handle_start(update, context)
+    """Silently ignore any unknown messages. The bot only reacts to /start and inline buttons."""
+    return

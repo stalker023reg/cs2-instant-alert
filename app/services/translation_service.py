@@ -59,10 +59,21 @@ class TranslationService:
             )
             translated = str(result)
             
-            # DeepL sometimes inserts extra newlines before closing parentheses or brackets
-            # when using HTML tag handling. Clean these up.
-            translated = translated.replace("\n)", ")").replace("\n]", "]")
-            translated = translated.replace(" \n", " ").replace("\n ", "\n")
+            # DeepL sometimes inserts extra newlines around parentheses and brackets
+            # when using HTML tag handling. Clean these up aggressively.
+            import re
+            # Remove newlines immediately before or after parentheses/brackets
+            translated = re.sub(r'\s*\n\s*\)', ')', translated)
+            translated = re.sub(r'\(\s*\n\s*', '(', translated)
+            translated = re.sub(r'\s*\n\s*\]', ']', translated)
+            translated = re.sub(r'\[\s*\n\s*', '[', translated)
+            # Remove newlines inside <a> tags (DeepL sometimes breaks link text across lines)
+            translated = re.sub(
+                r'(<a\b[^>]*>)(.*?)(</a>)',
+                lambda m: m.group(1) + m.group(2).replace('\n', ' ') + m.group(3),
+                translated,
+                flags=re.DOTALL,
+            )
             
             await logger.ainfo(
                 "patch_notes_translated",
