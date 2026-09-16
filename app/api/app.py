@@ -75,7 +75,13 @@ def create_api_app(
         await logger.ainfo("user_notification_defaults_ready", users=repaired_users)
 
         # Start core background services
-        await container.steam_client().initialize()
+        from app.steam.client import SteamConnectionError
+        try:
+            await container.steam_client().initialize()
+        except SteamConnectionError as exc:
+            await logger.awarning("steam_client_initial_connect_failed", error=str(exc))
+        except Exception as exc:
+            await logger.aerror("steam_client_initial_connect_unexpected_error", error=str(exc))
         container.event_bus().start()
 
         # Subscribe PatchNotesService

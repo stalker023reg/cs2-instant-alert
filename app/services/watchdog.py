@@ -81,14 +81,17 @@ class SilentWatchdogService:
                 await logger.awarning("system_components_failed", failed=failed_components)
                 
             downtime_minutes = (now - self._system_downtime_start).total_seconds() / 60.0
-            
-            if downtime_minutes >= 5.0:
+
+            # Only restart if internal critical services (database, event_bus, scheduler) are failing.
+            # Steam downtime is an external event and handled via alerts/auto-reconnect in section 2.
+            internal_critical = [c for c in failed_components if c in {"database", "event_bus", "scheduler"}]
+            if internal_critical and downtime_minutes >= 10.0:
                 message = (
                     f"⚠️ Критическая ошибка!\n\n"
-                    f"Компоненты ({', '.join(failed_components)}) не отвечают более 5 минут.\n"
+                    f"Внутренние компоненты ({', '.join(internal_critical)}) не отвечают более 10 минут.\n"
                     f"Инициирован принудительный перезапуск контейнера для восстановления связи."
                 )
-                await logger.acritical("SystemDowntimeTooLong", failed=failed_components, minutes=int(downtime_minutes), action="os._exit(1)")
+                await logger.acritical("SystemDowntimeTooLong", failed=internal_critical, minutes=int(downtime_minutes), action="os._exit(1)")
                 if self.admin_notifier and status.get("telegram_bot", False):
                     # Only try to broadcast if TG bot is healthy
                     try:

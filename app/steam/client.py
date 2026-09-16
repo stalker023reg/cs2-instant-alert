@@ -90,7 +90,7 @@ class AsyncSteamClient:
         try:
             done, pending = await asyncio.wait(
                 {connected_waiter, failed_waiter},
-                timeout=30.0,
+                timeout=15.0,
                 return_when=asyncio.FIRST_COMPLETED,
             )
             for waiter in pending:
@@ -155,14 +155,25 @@ class AsyncSteamClient:
                     )
                 # Client auto-reconnects by default
 
-            # Connect and log in
-            if self.settings.steam_anonymous_login:
-                self.client.anonymous_login()
-            else:
-                self.client.login(
-                    username=self.settings.steam_username,
-                    password=self.settings.steam_password,
-                )
+            # Connect and log in (retry loop handles startup during Steam maintenance or network blips)
+            while not self._stop_requested.is_set():
+                try:
+                    if self.settings.steam_anonymous_login:
+                        self.client.anonymous_login()
+                    else:
+                        self.client.login(
+                            username=self.settings.steam_username,
+                            password=self.settings.steam_password,
+                        )
+                    if self.client.logged_on:
+                        break
+                except Exception as login_err:
+                    self.consecutive_failed_attempts += 1
+                    self.disconnect_reason = str(login_err)
+
+                if self._stop_requested.is_set():
+                    return
+                self.client.sleep(5.0)
 
             # Main loop: pump gevent hub AND process queued tasks
             while not self._stop_requested.is_set():

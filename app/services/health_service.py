@@ -75,10 +75,9 @@ class HealthService:
             if status.get("telegram_bot"):
                 await self._notify_admin_safe_mode(failed)
 
-            # Since user requested "either exit gracefully or safe mode",
-            # if DB or Steam fails, it's totally broken. We will exit gracefully.
-            if "database" in failed or "steam_client" in failed:
-                sys.exit("Critical components failed self-test. Exiting.")
+            # If the primary database fails, the app cannot operate.
+            if "database" in failed:
+                sys.exit("Critical database component failed self-test. Exiting.")
         else:
             await logger.ainfo("startup_self_test_passed")
 
