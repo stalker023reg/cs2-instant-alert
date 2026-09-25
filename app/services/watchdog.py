@@ -129,7 +129,7 @@ class SilentWatchdogService:
             return
 
         # If not connected, check how long it's been down
-        disconnect_time = self.steam_client.disconnect_time
+        disconnect_time = self.steam_client.disconnect_time or self._system_downtime_start
         if not disconnect_time:
             return
 
@@ -144,13 +144,20 @@ class SilentWatchdogService:
             self._alert_active = True
             self._last_alert_time = now
 
+            # Automatic self-healing: restart steam client if down for >= 5 minutes
+            await logger.awarning("steam_watchdog_triggering_self_heal", minutes=int(steam_downtime_minutes))
+            try:
+                await self.steam_client.restart()
+            except Exception as e:
+                await logger.aerror("steam_watchdog_self_heal_error", error=str(e))
+
             message = (
                 f"⚠️ Внимание!\n\n"
                 f"Мониторинг Steam остановлен.\n"
                 f"Последняя успешная проверка: {int(steam_downtime_minutes)} минут назад.\n"
-                f"Причина: {self.steam_client.disconnect_reason}\n"
+                f"Причина: {self.steam_client.disconnect_reason or 'Неизвестно'}\n"
                 f"Попыток переподключения: {self.steam_client.consecutive_failed_attempts}\n\n"
-                f"Требуется проверка сервиса."
+                f"Инициирован автоматический перезапуск подсистемы Steam."
             )
 
             await logger.acritical("SteamDisconnected", minutes=int(steam_downtime_minutes))

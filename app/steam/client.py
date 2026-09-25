@@ -113,6 +113,41 @@ class AsyncSteamClient:
                 if not waiter.done():
                     waiter.cancel()
 
+    def _setup_client_handlers(self) -> None:
+        """Register event handlers on self.client."""
+        from datetime import datetime
+
+        @self.client.on("logged_on")
+        def handle_logged_on() -> None:
+            if self._loop:
+                self._loop.call_soon_threadsafe(self._connected.set)
+
+            now = datetime.now(UTC)
+            self.last_successful_connection = now
+            self.reconnect_time = now
+            if self.disconnect_time:
+                self.downtime_duration = (now - self.disconnect_time).total_seconds()
+            self.consecutive_failed_attempts = 0
+            self.disconnect_reason = None
+
+        @self.client.on("disconnected")
+        def handle_disconnected(result=None) -> None:
+            if self._loop:
+                self._loop.call_soon_threadsafe(self._connected.clear)
+
+            now = datetime.now(UTC)
+            self.disconnect_time = now
+            self.consecutive_failed_attempts += 1
+            self.disconnect_reason = str(result) if result else "Unknown"
+
+            if self._loop:
+                self._loop.call_soon_threadsafe(
+                    lambda: asyncio.create_task(
+                        logger.awarning("steam_disconnected", reason=self.disconnect_reason, attempts=self.consecutive_failed_attempts)
+                    )
+                )
+            # Client auto-reconnects by default
+
     def _run_steam_client(self) -> None:
         """Runs in the background thread."""
         try:
@@ -121,55 +156,50 @@ class AsyncSteamClient:
             # ``Invalid switch into AsyncResult.wait()`` at runtime.
             self._gevent_hub = gevent.get_hub()
             self.client = SteamClient()
-            from datetime import datetime
+            self._setup_client_handlers()
 
-            # Register event handlers
-            @self.client.on("logged_on")
-            def handle_logged_on() -> None:
-                if self._loop:
-                    self._loop.call_soon_threadsafe(self._connected.set)
-
-                now = datetime.now(UTC)
-                self.last_successful_connection = now
-                self.reconnect_time = now
-                if self.disconnect_time:
-                    self.downtime_duration = (now - self.disconnect_time).total_seconds()
-                self.consecutive_failed_attempts = 0
-                self.disconnect_reason = None
-
-            @self.client.on("disconnected")
-            def handle_disconnected(result=None) -> None:
-                if self._loop:
-                    self._loop.call_soon_threadsafe(self._connected.clear)
-
-                now = datetime.now(UTC)
-                self.disconnect_time = now
-                self.consecutive_failed_attempts += 1
-                self.disconnect_reason = str(result) if result else "Unknown"
-
-                if self._loop:
-                    self._loop.call_soon_threadsafe(
-                        lambda: asyncio.create_task(
-                            logger.awarning("steam_disconnected", reason=self.disconnect_reason, attempts=self.consecutive_failed_attempts)
-                        )
-                    )
-                # Client auto-reconnects by default
-
-            # Connect and log in (retry loop handles startup during Steam maintenance or network blips)
+            # Connect and log in (retry loop with strict timeout to prevent hangs on dead CM servers)
+            fail_count = 0
             while not self._stop_requested.is_set():
                 try:
-                    if self.settings.steam_anonymous_login:
-                        self.client.anonymous_login()
-                    else:
-                        self.client.login(
-                            username=self.settings.steam_username,
-                            password=self.settings.steam_password,
-                        )
+                    # Enforce a 15s timeout per login attempt so dead CM servers cannot block the thread
+                    with gevent.Timeout(15.0, False):
+                        if self.settings.steam_anonymous_login:
+                            self.client.anonymous_login()
+                        else:
+                            self.client.login(
+                                username=self.settings.steam_username,
+                                password=self.settings.steam_password,
+                            )
                     if self.client.logged_on:
                         break
+
+                    fail_count += 1
+                    self.consecutive_failed_attempts += 1
+                    self.disconnect_reason = "Login timed out or failed"
+
+                    # Disconnect any hanging or half-open socket
+                    try:
+                        self.client.disconnect()
+                    except Exception:
+                        pass
+
+                    # Re-instantiate SteamClient to refresh CM server list from WebAPI if repeatedly failing
+                    if fail_count >= 3:
+                        try:
+                            self.client = SteamClient()
+                            self._setup_client_handlers()
+                            fail_count = 0
+                        except Exception:
+                            pass
+
                 except Exception as login_err:
                     self.consecutive_failed_attempts += 1
                     self.disconnect_reason = str(login_err)
+                    try:
+                        self.client.disconnect()
+                    except Exception:
+                        pass
 
                 if self._stop_requested.is_set():
                     return
@@ -235,6 +265,31 @@ class AsyncSteamClient:
             await asyncio.to_thread(self._thread.join, 5.0)
 
         await logger.ainfo("steam_client_closed")
+
+    async def restart(self) -> None:
+        """Restart the Steam client thread and reconnect (used for watchdog self-healing)."""
+        await logger.ainfo("steam_client_restart_requested")
+        await self.close()
+
+        self._stop_requested.clear()
+        self._connected.clear()
+        self._startup_failed.clear()
+        self._thread_error = None
+        self._task_queue = queue.Queue()
+
+        self._thread = threading.Thread(
+            target=self._run_steam_client,
+            daemon=True,
+            name="SteamClientThread",
+        )
+        self._thread.start()
+
+        try:
+            connected_waiter = asyncio.create_task(self._connected.wait())
+            await asyncio.wait_for(connected_waiter, timeout=15.0)
+            await logger.ainfo("steam_client_restarted_successfully")
+        except TimeoutError:
+            await logger.awarning("steam_client_restart_connect_pending")
 
     async def _run_in_steam_thread(
         self,
