@@ -135,7 +135,7 @@ class SilentWatchdogService:
 
         steam_downtime_minutes = (now - disconnect_time).total_seconds() / 60.0
 
-        if steam_downtime_minutes >= 5.0:
+        if steam_downtime_minutes >= 2.0:
             if self._last_alert_time:
                 time_since_last_alert = (now - self._last_alert_time).total_seconds() / 60.0
                 if time_since_last_alert < 10.0:

@@ -205,12 +205,83 @@ class AsyncSteamClient:
                     return
                 self.client.sleep(5.0)
 
-            # Main loop: pump gevent hub AND process queued tasks
+            # Main loop: pump gevent hub, process queued tasks, and auto-reconnect
+            import time as _time
+            last_heartbeat = _time.monotonic()
+            reconnect_delay = 5.0   # seconds; grows with exponential backoff
+            reconnect_failures = 0
+
             while not self._stop_requested.is_set():
                 # Process any pending tasks from the async side
                 self._drain_task_queue()
-                # Give gevent a chance to process its events (heartbeats etc.)
-                self.client.sleep(0.5)
+
+                if not self.client.logged_on:
+                    # ── Auto-reconnect within the Steam thread ──
+                    if self._loop:
+                        _delay = reconnect_delay
+                        self._loop.call_soon_threadsafe(
+                            lambda d=_delay: asyncio.create_task(
+                                logger.awarning("steam_auto_reconnecting", delay=d)
+                            )
+                        )
+
+                    self.client.sleep(reconnect_delay)
+                    if self._stop_requested.is_set():
+                        break
+
+                    try:
+                        # Re-create client after 3 consecutive failures (stale CM list)
+                        if reconnect_failures >= 3:
+                            try:
+                                self.client = SteamClient()
+                                self._setup_client_handlers()
+                                reconnect_failures = 0
+                            except Exception:
+                                pass
+
+                        with gevent.Timeout(15.0, False):
+                            if self.settings.steam_anonymous_login:
+                                self.client.anonymous_login()
+                            else:
+                                self.client.login(
+                                    username=self.settings.steam_username,
+                                    password=self.settings.steam_password,
+                                )
+
+                        if self.client.logged_on:
+                            reconnect_delay = 5.0
+                            reconnect_failures = 0
+                        else:
+                            reconnect_failures += 1
+                            reconnect_delay = min(reconnect_delay * 2, 60.0)
+                            try:
+                                self.client.disconnect()
+                            except Exception:
+                                pass
+                    except Exception:
+                        reconnect_failures += 1
+                        reconnect_delay = min(reconnect_delay * 2, 60.0)
+                        try:
+                            self.client.disconnect()
+                        except Exception:
+                            pass
+                else:
+                    reconnect_delay = 5.0
+                    reconnect_failures = 0
+                    # Give gevent a chance to process its events (heartbeats etc.)
+                    self.client.sleep(0.5)
+
+                # ── Heartbeat every 5 minutes for observability ──
+                now_mono = _time.monotonic()
+                if now_mono - last_heartbeat >= 300:
+                    last_heartbeat = now_mono
+                    _is_on = self.client.logged_on
+                    if self._loop:
+                        self._loop.call_soon_threadsafe(
+                            lambda c=_is_on: asyncio.create_task(
+                                logger.ainfo("steam_heartbeat", connected=c)
+                            )
+                        )
 
         except Exception as e:
             self._thread_error = str(e)
