@@ -76,12 +76,11 @@ async def handle_test(update: Update, context: CallbackContext) -> None:
             language="ru"
         )
         
-        from app.utils.formatting import italic
-        text += f"\n\n{italic('Это ГЛОБАЛЬНОЕ тестовое уведомление.')}"
+        text += "\n\n<i>Это ГЛОБАЛЬНОЕ тестовое уведомление.</i>"
 
         for u in all_active_users:
             try:
-                await context.bot.send_message(chat_id=u.telegram_id, text=text, parse_mode="MarkdownV2")
+                await context.bot.send_message(chat_id=u.telegram_id, text=text, parse_mode="HTML")
             except Exception as e:
                 await logger.awarning("test_notification_failed_for_user", telegram_id=u.telegram_id, error=str(e))
         

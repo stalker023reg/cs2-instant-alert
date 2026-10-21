@@ -27,6 +27,7 @@ class UpdateDetectedEvent(BaseModel):
 
     # Raw payload for extracting patch notes if available
     raw_data: AppUpdateData
+    depot_changes: dict | None = None
 
 
 class PatchNotesFoundEvent(BaseModel):

@@ -10,6 +10,8 @@ from __future__ import annotations
 from datetime import datetime
 from enum import Enum
 
+from typing import Any
+
 from pydantic import BaseModel, ConfigDict
 
 
@@ -66,3 +68,47 @@ class AppUpdateData(BaseModel):
         if "public" in self.branches:
             return self.branches["public"].build_id
         return None
+
+    def get_manifest_dict(self) -> dict[str, str]:
+        """Return dict of depot_id (str) -> manifest_id for all depots with manifests."""
+        return {
+            str(depot_id): depot.manifest_id
+            for depot_id, depot in self.depots.items()
+            if depot.manifest_id
+        }
+
+    def compute_depot_diff(
+        self, previous_manifests: dict[str, str] | None = None
+    ) -> dict[str, dict[str, Any]]:
+        """
+        Compare current depots against previous manifests to find what changed.
+
+        Returns:
+            Dict of depot_id (str) -> {name, old_manifest, new_manifest, size_bytes}
+        """
+        if not previous_manifests:
+            return {
+                str(depot_id): {
+                    "name": depot.name,
+                    "old_manifest": None,
+                    "new_manifest": depot.manifest_id,
+                    "size_bytes": depot.size_bytes,
+                }
+                for depot_id, depot in self.depots.items()
+                if depot.manifest_id
+            }
+
+        diff: dict[str, dict[str, Any]] = {}
+        for depot_id, depot in self.depots.items():
+            if not depot.manifest_id:
+                continue
+            depot_str = str(depot_id)
+            old_manifest = previous_manifests.get(depot_str)
+            if old_manifest != depot.manifest_id:
+                diff[depot_str] = {
+                    "name": depot.name,
+                    "old_manifest": old_manifest,
+                    "new_manifest": depot.manifest_id,
+                    "size_bytes": depot.size_bytes,
+                }
+        return diff

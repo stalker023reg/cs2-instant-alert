@@ -95,6 +95,10 @@ class AppSettings(BaseSettings):
     # ─── Translation (DeepL) ───
     deepl_api_key: SecretStr | None = None
 
+    # ─── AI Analysis (Gemini) ───
+    gemini_api_key: SecretStr | None = None
+    gemini_model: str = "gemini-3.8-flash"
+
     # ─── API ───
     api_host: str = "0.0.0.0"
     api_port: int = 8000

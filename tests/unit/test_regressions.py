@@ -33,8 +33,15 @@ async def test_steam_operation_runs_through_own_gevent_hub(monkeypatch) -> None:
     wrapper.client.get_product_info.return_value = {"apps": {730: {}}}
     wrapper._connected.set()
 
-    # Make the fake hub execute the greenlet body synchronously.
-    monkeypatch.setattr("app.steam.client.gevent.spawn", lambda callback: callback())
+    # Make gevent.spawn execute synchronously with arguments
+    monkeypatch.setattr("app.steam.client.gevent.spawn", lambda fn, *args: fn(*args))
+
+    # Automatically drain task queue when task is put
+    orig_put = wrapper._task_queue.put
+    def auto_drain(item):
+        orig_put(item)
+        wrapper._drain_task_queue()
+    monkeypatch.setattr(wrapper._task_queue, "put", auto_drain)
 
     result = await wrapper.get_product_info([730])
 
@@ -56,7 +63,7 @@ async def test_update_service_preserves_previous_build_id() -> None:
         return state
 
     service.state_repo = MagicMock()
-    service.state_repo.update = AsyncMock(side_effect=update_state)
+    service.state_repo.update_state = AsyncMock(side_effect=update_state)
 
     data = AppUpdateData(
         app_id=730,

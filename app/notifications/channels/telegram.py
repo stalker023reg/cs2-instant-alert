@@ -44,10 +44,26 @@ class TelegramChannel(AbstractNotificationChannel):
         if not self.bot:
             raise ChannelDeliveryError("Telegram bot token not configured", code="TG_NO_TOKEN")
 
+        # Format depot diff if available in event
+        depot_diff_html = None
+        if event.depot_changes:
+            from app.services.gemini_analysis_service import CS2_DEPOT_NAMES
+            lines = []
+            for depot_id_str in event.depot_changes:
+                try:
+                    depot_id = int(depot_id_str)
+                    name = CS2_DEPOT_NAMES.get(depot_id, f"Depot {depot_id}")
+                    lines.append(f"  📦 <b>{name}</b>")
+                except ValueError:
+                    lines.append(f"  📦 <b>Depot {depot_id_str}</b>")
+            if lines:
+                depot_diff_html = "\n".join(lines)
+
         text = TelegramFormatter.format_update_alert(
             event=event,
             timezone=user.timezone,
             language=user.language,
+            depot_diff_html=depot_diff_html,
         )
 
         # Acknowledgement button removed
@@ -96,6 +112,8 @@ class TelegramChannel(AbstractNotificationChannel):
         event: UpdateDetectedEvent,
         patch_notes_html: str | None = None,
         patch_url: str | None = None,
+        ai_analyzed: bool = False,
+        depot_diff_html: str | None = None,
     ) -> None:
         """Edit an existing message, replacing placeholder with patch notes."""
         if not self.bot:
@@ -107,6 +125,8 @@ class TelegramChannel(AbstractNotificationChannel):
             language=user.language,
             patch_notes_html=patch_notes_html,
             patch_url=patch_url,
+            ai_analyzed=ai_analyzed,
+            depot_diff_html=depot_diff_html,
         )
 
         try:

@@ -22,6 +22,7 @@ from app.scheduler.tasks import MonitoringOrchestrator
 from app.services.admin_notifier import AdminNotifierService
 from app.services.health_service import HealthService
 from app.services.metrics_service import MetricsService
+from app.services.gemini_analysis_service import GeminiAnalysisService
 from app.services.patch_notes_service import PatchNotesService
 from app.services.translation_service import TranslationService
 from app.services.watchdog import SilentWatchdogService
@@ -165,12 +166,19 @@ class Container(containers.DeclarativeContainer):
         api_key=config.provided.deepl_api_key,
     )
 
+    gemini_analysis_service = providers.Singleton(
+        GeminiAnalysisService,
+        api_key=config.provided.gemini_api_key,
+        model=config.provided.gemini_model,
+    )
+
     patch_notes_service = providers.Singleton(
         PatchNotesService,
         session_factory=db_manager.provided.session,
         telegram_channel=telegram_channel,
         settings=config,
         translation_service=translation_service,
+        gemini_service=gemini_analysis_service,
     )
 
     admin_notifier_service = providers.Singleton(

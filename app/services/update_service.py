@@ -132,15 +132,14 @@ class UpdateService:
         data: AppUpdateData,
         now: datetime,
     ) -> None:
-        """Create update record and emit event."""
-        # Calculate size if depots present (Currently disabled as PICS only provides total game size, not patch size)
+        # Compute depot diff using previous update's manifests
         size_bytes = 0
-        manifest_changes = {}
-        depot_changes = {}
+        prev_update = await self.update_repo.get_latest_for_game(game_id)
+        prev_manifests = prev_update.manifest_changes if prev_update and prev_update.manifest_changes else None
 
-        for depot_id, depot_info in data.depots.items():
-            if depot_info.manifest_id:
-                manifest_changes[str(depot_id)] = depot_info.manifest_id
+        current_manifests = data.get_manifest_dict()
+        depot_diff = data.compute_depot_diff(prev_manifests)
+        depot_changes = {"changed": depot_diff} if depot_diff else {}
 
         # Determine if it's critical based on size or changes
         # For CS2, almost any client update is critical for server admins.
@@ -152,7 +151,7 @@ class UpdateService:
             build_id=new_build_id,
             previous_build_id=old_build_id,
             size_bytes=size_bytes if size_bytes > 0 else None,
-            manifest_changes=manifest_changes,
+            manifest_changes=current_manifests,
             depot_changes=depot_changes,
             raw_data=data.model_dump(mode="json"),
             detected_at=now,
@@ -191,5 +190,6 @@ class UpdateService:
             is_critical=is_critical,
             detected_at=now,
             raw_data=data,
+            depot_changes=depot_changes.get("changed") if depot_changes else None,
         )
         await self.event_bus.publish(event)

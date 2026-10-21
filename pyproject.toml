@@ -36,6 +36,9 @@ dependencies = [
     # --- Translation ---
     "deepl>=1.18.0,<2.0",
 
+    # --- AI Analysis ---
+    "google-genai>=1.0.0,<2.0",
+
     # --- Scheduler ---
     "apscheduler>=3.10.0,<4.0",
 

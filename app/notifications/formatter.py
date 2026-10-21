@@ -22,6 +22,8 @@ class TelegramFormatter:
         language: str = "ru",
         patch_notes_html: str | None = None,
         patch_url: str | None = None,
+        ai_analyzed: bool = False,
+        depot_diff_html: str | None = None,
     ) -> str:
         """Format an UpdateDetectedEvent for Telegram."""
 
@@ -40,14 +42,32 @@ class TelegramFormatter:
         if patch_notes_html:
             lines.append("")
             lines.append(f"{'─' * 22}")
-            lines.append(f"📋 <b>Patch Notes</b>")
+            if ai_analyzed:
+                header = "🤖 <b>AI-анализ</b>" if patch_url else "🤖 <b>AI-анализ (Бесшумный патч)</b>"
+                lines.append(header)
+            else:
+                lines.append("📋 <b>Patch Notes</b>")
             lines.append("")
             lines.append(patch_notes_html)
+
+            if depot_diff_html:
+                lines.append("")
+                lines.append(f"{'─' * 22}")
+                lines.append("📦 <b>Изменённые компоненты</b>")
+                lines.append("")
+                lines.append(depot_diff_html)
 
             if patch_url:
                 lines.append("")
                 lines.append(f'🔗 <a href="{patch_url}">Читать полностью на Steam</a>')
         else:
+            if depot_diff_html:
+                lines.append("")
+                lines.append(f"{'─' * 22}")
+                lines.append("📦 <b>Изменённые компоненты</b>")
+                lines.append("")
+                lines.append(depot_diff_html)
+
             lines.append("")
             lines.append("<i>⏳ Ждём patch notes...</i>")
 
