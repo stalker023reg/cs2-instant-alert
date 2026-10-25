@@ -4,63 +4,69 @@ Real-time monitoring system for Counter-Strike 2 updates. Detects new builds wit
 
 ## Features
 
-- **Real-time Steam monitoring** — connects to Steam network via PICS protocol for instant build change detection
+- **Real-time Steam monitoring** — connects to Steam network via PICS protocol for instant build change detection (every 5s)
 - **Multi-source validation** — cross-checks PICS data against Steam Store API and Web API to eliminate false positives
-- **Automatic patch notes** — polls Steam News API after update detection, translates via DeepL, and edits the original alert message in-place
+- **Real datamining via GitHub** — tracks `SteamTracking/GameTracking-CS2` to extract exact `PatchVersion` from `steam.inf` and inspect actual file diffs (`convars`, schemas, Panorama UI, localization)
+- **AI-powered analysis (Gemini Flash)** — generates structured TL;DR summaries for official patch notes and analyzes silent updates without hallucination
+- **Two-stage alert pipeline** — delivers an instant alert at T+0 with clean player depots, then edits the message in-place once datamine or official notes are ready (with a 20m fallback)
+- **Clean depot filtering** — strips dedicated server (`732`, `2347773`) and macOS (`735`, `2347779`) noise, collapsing technical depots
 - **Critical notification retry** — unacknowledged critical alerts are re-sent on an exponential backoff schedule until the user confirms receipt
-- **Race Mode** — automatically increases polling frequency for 30 minutes after an update is detected (configurable)
-- **Self-healing watchdog** — monitors all subsystems (DB, Redis, Steam, Telegram, scheduler) and triggers container restart if any component is unresponsive for 5+ minutes
-- **Startup recovery** — on boot, resumes patch note polling for any recent updates that were interrupted
-- **Telegram bot** — interactive bot with `/status`, `/subscribe`, `/settings` commands and inline acknowledgement buttons
+- **Self-healing watchdog & auto-reconnect** — monitors all subsystems (DB, Redis, Steam, Telegram, scheduler), auto-reconnects to Steam with exponential backoff, and triggers restart on sustained failure
+- **Interactive Telegram bot** — interactive bot with `/status`, `/subscribe`, `/settings` commands and inline buttons
 
 ## Architecture
 
 ```
-┌─────────────────────────────────────────────────────────┐
-│                    FastAPI Application                   │
-├──────────┬──────────┬───────────┬───────────┬───────────┤
-│  Steam   │ Event    │ Notifi-   │ Scheduler │ Telegram  │
-│  Client  │ Bus      │ cation    │           │ Bot       │
-│ (gevent) │          │ Engine    │           │           │
-├──────────┴──────────┴───────────┴───────────┴───────────┤
-│                  PostgreSQL + Redis                     │
-└─────────────────────────────────────────────────────────┘
+┌────────────────────────────────────────────────────────────────────────┐
+│                          FastAPI Application                           │
+├──────────┬──────────┬───────────┬───────────┬─────────────┬────────────┤
+│  Steam   │ Event    │ Notifi-   │ Scheduler │ Telegram    │ AI / Data- │
+│  Client  │ Bus      │ cation    │           │ Bot         │ mine Engine│
+│ (gevent) │          │ Engine    │           │             │            │
+├──────────┴──────────┴───────────┴───────────┴─────────────┴────────────┤
+│                    PostgreSQL (Supabase) + Redis                       │
+└────────────────────────────────────────────────────────────────────────┘
 ```
 
 ### Core Components
 
 | Component | Description |
 |-----------|-------------|
-| `AsyncSteamClient` | Persistent connection to Steam network via gevent. Handles login, reconnection with exponential backoff, and PICS product info tracking |
-| `MultiSourceMonitor` | Orchestrates PICS, Store, and WebAPI monitors. Validates changes through multiple sources before emitting events |
-| `EventBus` | Async pub/sub system. Decouples detection from processing — subscribers react to `AppInfoChangedEvent` and `UpdateDetectedEvent` |
-| `NotificationDispatcher` | Delivers alerts to all subscribed users. Supports channel escalation (Telegram → Pushover) on failure |
-| `RetryEngine` | Background worker that retries failed critical notifications until acknowledged |
-| `PatchNotesService` | Polls Steam News API for up to 30 minutes after update detection. Edits delivered messages with formatted, translated patch notes |
-| `SilentWatchdogService` | System-wide health monitor. Checks all components every 60s, triggers `os._exit(1)` after 5 min of sustained failure to let the container orchestrator restart the process |
-| `HealthService` | Provides health status for all subsystems (DB, Redis, Steam, Telegram, EventBus, Scheduler) |
+| `AsyncSteamClient` | Persistent connection to Steam network via gevent with in-thread auto-reconnect and PICS product info tracking |
+| `MultiSourceMonitor` | Orchestrates PICS, Store, and WebAPI monitors to validate updates |
+| `EventBus` | Async pub/sub system decoupling detection from notification delivery |
+| `NotificationDispatcher` | Delivers formatted alerts to all subscribers (Telegram, Pushover) |
+| `depot_filter` | Filters out dedicated server, macOS, and technical depots for a clean player-facing alert |
+| `GitHubDatamineFetcher` | Polls `SteamTracking/GameTracking-CS2` commits for real file changes and `steam.inf` patch version |
+| `SteamNewsFetcher` | Queries official Steam News API within a flexible release window |
+| `GeminiAnalysisService` | Google Gemini Flash integration with strict anti-hallucination rules for patch notes & silent updates |
+| `PatchNotesService` | Orchestrates 2-stage polling (every 45s up to 20m) and in-place alert editing |
+| `SilentWatchdogService` | System health monitor checking all components every 60s with automatic self-healing |
+| `HealthService` | Readiness and liveness endpoints for all 7 subsystems |
 
 ### Update Flow
 
-1. `AsyncSteamClient` detects a PICS product info change for app 730 (CS2)
-2. `MultiSourceMonitor` validates the change against Store/WebAPI
-3. `UpdateService` persists the update record with a timeline of processing stages
-4. `NotificationDispatcher` sends formatted Telegram alerts to all subscribers
-5. `PatchNotesService` begins polling for official patch notes
-6. When found, patch notes are translated to Russian and the original message is edited in-place
+1. **Detection (T+0):** `AsyncSteamClient` detects a PICS product info change for CS2 (`app_id=730`).
+2. **Depot Filtering:** `depot_filter` strips server/macOS depots and formats clean client depot names.
+3. **Stage 1 Alert:** Instant Telegram alert sent with build ID and waiting placeholder (`⏳ Анализируем файлы обновления...`).
+4. **Datamining & News Polling:** Background worker polls Steam News API and GitHub (`SteamTracking/GameTracking-CS2`) every 45s.
+5. **AI Analysis:** If patch notes exist, Gemini Flash summarizes key player changes. If it is a silent update, Gemini analyzes datamined file diffs (`convars`, Panorama, items) under `🕵️ Не вошло в патчноут (Датамайнинг)`.
+6. **Stage 2 In-Place Edit:** Original Telegram alert is edited with the exact game patch version and structured analysis.
 
 ## Tech Stack
 
 | Layer | Technology |
 |-------|------------|
-| Runtime | Python 3.12 |
+| Runtime | Python 3.11+ |
 | Web Framework | FastAPI + Uvicorn |
-| Database | PostgreSQL (async via SQLAlchemy + asyncpg) |
+| Database | PostgreSQL (async via SQLAlchemy + asyncpg / Supabase) |
 | Migrations | Alembic |
 | Cache | Redis (Upstash) |
 | Steam | `steam[client]` library (PICS protocol, gevent) |
 | Telegram | `python-telegram-bot` v21 |
-| Translation | DeepL API |
+| AI Analysis | Google Gemini 2.0 Flash (`google-genai`) |
+| Datamining | GitHub REST API (`httpx`) |
+| Official News | Steam Web API (`ISteamNews`) |
 | DI Container | `dependency-injector` |
 | Logging | `structlog` (JSON in production) |
 | Hosting | Fly.io (Docker) |
@@ -70,38 +76,39 @@ Real-time monitoring system for Counter-Strike 2 updates. Detects new builds wit
 ```
 app/
 ├── api/              # FastAPI routes and dependencies
-│   ├── app.py        # Application factory with lifespan
-│   └── routes/       # Health, ready endpoints
 ├── bot/              # Telegram bot handlers and middleware
 ├── core/             # Config, container, logging, security
 ├── database/         # Session management, Alembic migrations
 ├── events/           # Event bus and event type definitions
 ├── models/           # SQLAlchemy ORM models
-├── notifications/    # Multi-channel notification engine
-│   ├── channels/     # Telegram, Pushover channel implementations
-│   ├── dispatcher.py # Notification routing and delivery
-│   └── retry_engine.py
+├── notifications/    # Multi-channel notification engine & formatters
 ├── repositories/     # Data access layer (Repository pattern)
 ├── scheduler/        # Monitoring orchestrator and tasks
 ├── schemas/          # Pydantic request/response schemas
 ├── services/         # Business logic services
-│   ├── health_service.py
-│   ├── patch_notes_service.py
-│   ├── update_service.py
-│   └── watchdog.py
+│   ├── gemini_analysis_service.py # Strict AI analysis & HTML sanitization
+│   ├── github_datamine_fetcher.py # SteamTracking datamining & steam.inf parser
+│   ├── health_service.py          # 7-component readiness checks
+│   ├── patch_notes_service.py     # 2-stage polling & in-place message editing
+│   ├── steam_news_fetcher.py      # Steam News API client
+│   ├── update_service.py          # Update lifecycle orchestration
+│   └── watchdog.py                # System resilience & auto-restart
 ├── steam/            # Steam client, monitors, types
-│   ├── client.py     # AsyncSteamClient (gevent bridge)
-│   ├── pics_monitor.py
-│   ├── store_monitor.py
-│   ├── webapi_monitor.py
-│   └── multi_source_monitor.py
-└── utils/            # Formatting, retry helpers, datetime utils
+└── utils/            # Depot filtering, datetime utils, retry helpers
 config/
-├── games/
-│   └── cs2.toml      # Game-specific monitoring configuration
+└── games/
+    └── cs2.toml      # Game-specific monitoring configuration
 ```
 
 ## Changelog
+
+### v1.1.0
+- **Feature (Datamining):** Integrated GitHub API polling (`SteamTracking/GameTracking-CS2`) to inspect real file diffs (convars, schema, Panorama UI, localization) and parse `PatchVersion` directly from `steam.inf`.
+- **Feature (AI Analysis):** Integrated Google Gemini Flash with strict anti-hallucination prompt rules to generate structured insights and categorize undocumented datamined changes.
+- **Feature (2-Stage Alerts):** Instant T+0 alert with filtered client depots and status placeholder, followed by seamless in-place editing as soon as analysis is complete (or 20-min timeout fallback).
+- **Feature (Depot Filtering):** Added intelligent depot filtering that removes dedicated server (`732`, `2347773`) and macOS (`735`, `2347779`) depots, collapsing unmapped technical depots.
+- **Improvement (Formatting):** Player-centric layout removing internal criticality labels and server warnings.
+- **Fix (Steam Resilience):** Added gevent timeout guards, in-thread exponential backoff, and automatic watchdog reconnection to prevent crash loops during Steam network downtime.
 
 ### v1.0.3
 - **Fix:** Rewrote DeepL post-translation cleanup with regex to aggressively remove stray newlines before/after parentheses and inside `<a>` link tags. This fully resolves the issue where translated patch note links had misplaced line breaks around brackets.

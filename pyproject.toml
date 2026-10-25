@@ -1,6 +1,6 @@
 [project]
 name = "cs2-instant-alert"
-version = "0.1.0"
+version = "1.1.0"
 description = "Production-grade Steam update monitoring with multi-channel critical notifications"
 readme = "docs/README.md"
 requires-python = ">=3.11"
