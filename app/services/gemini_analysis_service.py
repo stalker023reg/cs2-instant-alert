@@ -1,35 +1,20 @@
 """
 CS2 Instant Alert — Gemini AI Analysis Service.
 
-Analyzes patch notes and depot changes using Google Gemini 2.5 Flash
-to generate intelligent, structured summaries in Russian.
-
-Replaces the DeepL translation step with a smarter AI-powered analysis
-that categorizes changes, rates importance, and provides context.
+Analyzes patch notes and real git diffs from GameTracking-CS2 using Google Gemini Flash
+to generate structured, hallucination-free summaries in Russian.
 """
 
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass
+from typing import Any
 
 from app.core.logging import get_logger
+from app.utils.depot_filter import CS2_DEPOT_NAMES, filter_depots, format_depots_html
 
 logger = get_logger("system")
-
-# ─── Known CS2 Depot IDs → Human-readable names ───
-# Source: SteamDB — https://steamdb.info/app/730/depots/
-CS2_DEPOT_NAMES: dict[int, str] = {
-    730: "CS2 Shared Content",
-    731: "CS2 Client Content",
-    732: "CS2 Dedicated Server",
-    733: "CS2 Binaries (Win64)",
-    734: "CS2 Binaries (Linux64)",
-    735: "CS2 Binaries (macOS)",
-    2347770: "CS2 Content (Win64)",
-    2347771: "CS2 Content (Linux64)",
-    2347779: "CS2 Content (macOS)",
-}
 
 
 @dataclass
@@ -45,10 +30,8 @@ class UpdateAnalysis:
 
 class GeminiAnalysisService:
     """
-    Analyzes CS2 updates using Google Gemini 2.5 Flash.
-
-    Free tier: 15 RPM / 1M tokens per minute — more than enough
-    for 1-2 game updates per day.
+    Analyzes CS2 updates using Google Gemini Flash.
+    Strictly follows anti-hallucination guidelines.
     """
 
     MODEL = "gemini-3.8-flash"
@@ -87,34 +70,41 @@ class GeminiAnalysisService:
         self,
         raw_patch_notes: str | None = None,
         manifest_changes: dict[str, Any] | None = None,
+        git_diff: str | None = None,
+        patch_version: str | None = None,
     ) -> UpdateAnalysis:
         """
-        Analyze patch notes and depot changes, returning a structured AI summary.
+        Analyze official patch notes and actual Git Diff from GameTracking-CS2.
 
-        Supports both:
-          1. Official patch notes analysis with detection of hidden/undocumented depot changes.
-          2. Silent updates (no patch notes published) analyzed purely from depot diff.
-
-        Falls back to basic BB-code formatting or status text if AI is unavailable or fails.
-
-        Args:
-            raw_patch_notes: Raw Steam BB-code patch notes text (or None if silent update).
-            manifest_changes: Dict of depot_id -> manifest or change info.
-
-        Returns:
-            UpdateAnalysis with summary_html and optional depot_diff_html.
+        Strictly forbids guessing/hallucinations and produces factual Telegram HTML.
         """
+        depot_diff_html = self._format_depot_diff_html(manifest_changes) if manifest_changes else None
+
+        has_patch_notes = bool(raw_patch_notes and raw_patch_notes.strip())
+        has_git_diff = bool(git_diff and git_diff.strip())
+        has_depots = bool(manifest_changes)
+
+        # If neither patch notes nor git diff nor depots are available
+        if not has_patch_notes and not has_git_diff and not has_depots:
+            summary = "<i>Техническое обновление исполняемых файлов без изменений в геймплее, настройках и интерфейсе.</i>"
+            return UpdateAnalysis(
+                summary_html=summary,
+                depot_diff_html=depot_diff_html,
+            )
+
         if not self._client:
-            return self._fallback_analysis(raw_patch_notes)
+            return self._fallback_analysis(raw_patch_notes, depot_diff_html)
 
         try:
-            # Build depot context for the prompt
             depot_context = self._build_depot_context(manifest_changes)
+            prompt = self._build_prompt(
+                raw_patch_notes=raw_patch_notes,
+                depot_context=depot_context,
+                git_diff=git_diff,
+                patch_version=patch_version,
+            )
 
-            # Build the full prompt (adapts to whether patch notes are available)
-            prompt = self._build_prompt(raw_patch_notes, depot_context)
-
-            # Call Gemini Flash with automatic fallback across models if high demand
+            # Call Gemini Flash with fallback across models if high demand
             models_to_try = [self.model]
             for fallback_name in ("gemini-flash-latest", "gemini-2.5-flash-lite"):
                 if fallback_name not in models_to_try:
@@ -145,26 +135,17 @@ class GeminiAnalysisService:
                 if last_err:
                     raise last_err
                 await logger.awarning("gemini_empty_response")
-                return self._fallback_analysis(raw_patch_notes)
+                return self._fallback_analysis(raw_patch_notes, depot_diff_html)
 
             ai_text = response.text.strip()
-
-            # Post-process: ensure valid Telegram HTML
             summary_html = self._sanitize_telegram_html(ai_text)
-
-            # Build depot diff HTML separately
-            depot_diff_html = (
-                self._format_depot_diff_html(manifest_changes)
-                if manifest_changes
-                else None
-            )
 
             await logger.ainfo(
                 "gemini_analysis_complete",
-                input_len=len(raw_patch_notes) if raw_patch_notes else 0,
-                output_len=len(summary_html),
                 model=used_model,
-                silent_update=not bool(raw_patch_notes),
+                input_patch_len=len(raw_patch_notes) if raw_patch_notes else 0,
+                input_diff_len=len(git_diff) if git_diff else 0,
+                output_len=len(summary_html),
             )
 
             return UpdateAnalysis(
@@ -175,134 +156,121 @@ class GeminiAnalysisService:
 
         except Exception as e:
             await logger.aerror("gemini_analysis_failed", error=str(e), exc_info=True)
-            result = self._fallback_analysis(raw_patch_notes)
+            result = self._fallback_analysis(raw_patch_notes, depot_diff_html)
             result.error = str(e)
             return result
 
     # ─── Prompt Engineering ───
 
-    def _build_prompt(self, raw_patch_notes: str | None, depot_context: str) -> str:
-        """Build the analysis prompt for Gemini."""
-        if not raw_patch_notes or not raw_patch_notes.strip():
-            # Silent update prompt (no official patch notes published by Valve)
-            return f"""Ты — ведущий эксперт-аналитик по Counter-Strike 2 (CS2).
-Для этого обновления Valve НЕ опубликовали официальные Patch Notes (бесшумный патч / silent update / технический хотфикс).
-Однако система PICS зафиксировала изменение файлов в следующих компонентах игры:
-
-{depot_context}
-
-## Твоя задача:
-1. **TL;DR** — начни с 1-2 предложений: это технический хотфикс без официального списка изменений.
-2. **Анализ затронутых компонентов**:
-   - Если затронуты <code>CS2 Binaries (Win64 / Linux64)</code>: объясни, что обновлены основные исполняемые файлы клиента (вероятно, исправление критических крашей, эксплойтов, модулей VAC или утечек памяти).
-   - Если затронут <code>CS2 Dedicated Server</code>: выдели важное предупреждение для администраторов серверов (необходимость обновиться через SteamCMD, иначе клиенты с новой версией не смогут подключиться).
-   - Если затронут <code>CS2 Client Content / Content</code>: обновлены игровые ассеты (карты, скины, звуки или локализация).
-3. **Оценка важности**:
-   - 🔴 Критическое (если затронут Dedicated Server или бинарники, требующие обязательного обновления)
-   - 🟡 Среднее
-   - 🟢 Минорное
-
-## Правила форматирования:
-- Используй ТОЛЬКО Telegram HTML: <b>жирный</b>, <i>курсив</i>, <code>код</code>
-- НЕ используй Markdown (**, ##, ```, - списки)
-- Для списков используй символы ▸ или • в начале строки
-- Переносы строк — обычные переводы строки
-- Максимум 1200 символов, строго по делу, без лишней воды"""
-
-        # Regular update with patch notes + check for undocumented changes
-        return f"""Ты — ведущий эксперт-аналитик по Counter-Strike 2 (CS2).
-Проанализируй patch notes обновления CS2 и сопоставь их с изменившимися компонентами игры.
-Создай структурированную сводку на русском языке в формате Telegram HTML.
-
-## Официальные Patch Notes (Steam BB-code):
-{raw_patch_notes}
-
-{depot_context}
-
-## Инструкции:
-1. **TL;DR** — начни с 1-2 предложений: в чём главная суть этого обновления.
-2. **Категории** — разбей изменения на секции с иконками:
-   - 🎮 Геймплей
-   - 🗺 Карты
-   - 🛡 Анти-чит / VAC
-   - 🎨 Косметика / Армори
-   - 🔊 Звук
-   - 🖥 Интерфейс
-   - 🌐 Сеть / Серверы
-   - ⚙️ Прочее
-   (используй только релевантные категории, не включай пустые)
-3. **🔍 Недокументированные изменения**:
-   Внимательно сравни текст Patch Notes с разделом "Изменённые компоненты игры (Depot Changes)".
-   Если в депо изменились файлы, о которых ничего прямо не сказано в тексте (например, в тексте только правки карт, но обновились CS2 Dedicated Server или CS2 Binaries):
-   - ОБЯЗАТЕЛЬНО добавь блок:
-     🔍 <b>Недокументированные изменения:</b>
-     • Укажи, какие именно файлы/депо затронуты вопреки молчанию Valve (бинарники клиента, серверная часть).
-     • Объясни, что это значит (вероятно, скрытые правки движка/крашей, античит или сетевой протокол).
-     • Для администраторов серверов укажи, требуется ли обновление серверов.
-4. **Важность** — в конце укажи общую оценку:
-   - 🔴 Критическое (меняет мету/геймплей или ломает серверы)
-   - 🟡 Среднее (заметные улучшения)
-   - 🟢 Минорное (мелкие правки, багфиксы)
-
-## Правила форматирования:
-- Используй ТОЛЬКО Telegram HTML: <b>жирный</b>, <i>курсив</i>, <code>код</code>, <a href="url">ссылка</a>
-- НЕ используй Markdown (**, ##, ```, - списки)
-- НЕ используй теги <h1>, <h2>, <h3>, <p>, <br>, <div>, <ul>, <li>, <ol>
-- Для списков используй символы ▸ или • в начале строки
-- Переносы строк — обычные переводы строки
-- Максимум 2000 символов
-- Если patch notes на английском — переведи всё на русский"""
-
-    def _build_depot_context(
+    def _build_prompt(
         self,
-        manifest_changes: dict[str, str] | None,
+        raw_patch_notes: str | None = None,
+        depot_context: str | None = None,
+        git_diff: str | None = None,
+        patch_version: str | None = None,
     ) -> str:
+        """Construct the prompt using strict anti-hallucination rules."""
+        version_header = f"Версия обновления (steam.inf): {patch_version}\n" if patch_version else ""
+
+        patch_notes_section = (
+            f"### 1. Официальный патчноут от Valve:\n{raw_patch_notes}\n"
+            if (raw_patch_notes and raw_patch_notes.strip())
+            else "### 1. Официальный патчноут от Valve:\n(Официальный патчноут отсутствует — техническое обновление / бесшумный патч)\n"
+        )
+
+        diff_section = (
+            f"### 2. Реальный Git Diff из репозитория GameTracking-CS2:\n{git_diff}\n"
+            if (git_diff and git_diff.strip())
+            else "### 2. Реальный Git Diff из репозитория GameTracking-CS2:\n(В публичных ресурсах изменений файлов не обнаружено)\n"
+        )
+
+        depot_section = f"\n{depot_context}\n" if depot_context else ""
+
+        undocumented_instructions = ""
+        if depot_context and not git_diff:
+            undocumented_instructions = """
+🔍 Недокументированные изменения (Depot Changes):
+Если в депо изменились файлы, о которых ничего не сказано в тексте, отметь затронутые компоненты.
+"""
+
+        return f"""Ты — старший технический аналитик и датамайнер обновлений Counter-Strike 2.
+{version_header}
+На вход ты получаешь:
+1. Официальный патчноут от Valve (может отсутствовать, если патч технический / бесшумный патч).
+2. Реальный Git Diff измененных файлов игры из репозитория GameTracking-CS2 (консольные переменные, файлы скриптинга .d.ts, интерфейс Panorama UI, локализация, протобафы).
+
+Твоя задача — составить точный, профессиональный разбор обновления на русском языке для Telegram-канала.
+
+СТРОГИЕ ПРАВИЛА (ЗАПРЕТ НА ГАЛЛЮЦИНАЦИИ):
+1. КАТЕГОРИЧЕСКИ ЗАПРЕЩЕНО выдумывать изменения, которых нет во входных данных. Никогда не пиши общие фразы вроде «вероятно, обновлены сигнатуры VAC», «устранены утечки памяти», «исправлены эксплойты или геометрия карт», если это прямо не следует из предоставленного кода/текста.
+2. Запрещено использовать слова-догадки: «вероятно», «скорее всего», «как правило», «возможно». Опирайся только на факты из diff и патчноута.
+3. Сохраняй точные названия новых или измененных классов, методов, событий и консольных команд (ConVars) в моноширинном формате (<code>код</code>), указывая их значения по умолчанию, если они видны в диффе.
+
+ФОРМАТ ОТВЕТА:
+Используй чистую верстку для Telegram (используй ТОЛЬКО теги <b>жирный</b>, <i>курсив</i>, <code>код</code>).
+Раздели отчет на блоки (выводи блок только если для него есть реальные данные во входных материалах):
+
+🧰 <b>Основной патчноут и скриптинг</b>
+• Перевод официального патчноута на русский язык.
+• Если в диффе есть изменения point_script.d.ts (или других API), подробно и структурированно перечисли новые классы, методы, свойства, события и исправления типов (как дополнение к патчноуту).
+
+🕵️ <b>Не вошло в патчноут (Датамайнинг)</b>
+• <b>Консоль и настройки:</b> новые или измененные команды из convars.txt / commands.txt и за что они отвечают (исходя из их описания в диффе).
+• <b>Интерфейс (Panorama UI):</b> что именно изменилось в верстке/стилях (.css / .xml / .js) — например, размеры панелей, цвета, новые элементы меню или HUD.
+• <b>Локализация и ресурсы:</b> новые текстовые строки или упоминания контента.
+{undocumented_instructions}
+Если официального патчноута нет, а в Git Diff не нашлось изменений в командах, UI, скриптах или локализации — напиши ровно одно предложение:
+Техническое обновление исполняемых файлов без изменений в геймплее, настройках и интерфейсе.
+
+ВХОДНЫЕ ДАННЫЕ:
+{patch_notes_section}
+{diff_section}
+{depot_section}
+"""
+
+    def _build_depot_context(self, manifest_changes: dict[str, Any] | None) -> str:
         """Build depot change context string for the prompt."""
         if not manifest_changes:
             return ""
 
         lines = ["## Изменённые компоненты игры (Depot Changes):"]
 
-        for depot_id_str, manifest_id in manifest_changes.items():
+        for depot_id_str, val in manifest_changes.items():
             try:
                 depot_id = int(depot_id_str)
                 name = CS2_DEPOT_NAMES.get(depot_id, f"Depot {depot_id}")
-                lines.append(f"- {name} (ID: {depot_id}): новый manifest {manifest_id}")
+                if isinstance(val, dict):
+                    old_m = val.get("old_manifest")
+                    new_m = val.get("new_manifest")
+                    lines.append(f"- {name} (ID: {depot_id}): {old_m} -> {new_m}")
+                else:
+                    lines.append(f"- {name} (ID: {depot_id}): новый manifest {val}")
             except ValueError:
-                lines.append(f"- Depot {depot_id_str}: manifest {manifest_id}")
+                lines.append(f"- Depot {depot_id_str}: manifest {val}")
 
         return "\n".join(lines)
 
-    # ─── Depot Diff Formatting ───
-
-    def _format_depot_diff_html(self, manifest_changes: dict[str, str]) -> str:
+    def _format_depot_diff_html(self, manifest_changes: dict[str, Any]) -> str:
         """Format depot changes as Telegram HTML for the message."""
-        lines = []
-        for depot_id_str in manifest_changes:
-            try:
-                depot_id = int(depot_id_str)
-                name = CS2_DEPOT_NAMES.get(depot_id, f"Depot {depot_id}")
-                lines.append(f"  📦 <b>{name}</b>")
-            except ValueError:
-                lines.append(f"  📦 <b>Depot {depot_id_str}</b>")
-
-        return "\n".join(lines) if lines else ""
+        filtered_depots, tech_count = filter_depots(manifest_changes)
+        if not filtered_depots and not tech_count:
+            return ""
+        return format_depots_html(filtered_depots, tech_count)
 
     # ─── Output Sanitization ───
 
     def _sanitize_telegram_html(self, text: str) -> str:
         """
         Clean AI output to ensure valid Telegram HTML.
-
-        Telegram only supports: <b>, <i>, <u>, <s>, <code>, <pre>, <a>,
-        <tg-spoiler>, <tg-emoji>, <blockquote>.
-        Everything else must be stripped.
+        Telegram only supports: <b>, <i>, <u>, <s>, <code>, <pre>, <a>, <tg-spoiler>.
         """
-        # Remove Markdown artifacts the AI might have included
+        # Convert markdown bold **text** to <b>text</b>
+        text = re.sub(r"\*\*(.*?)\*\*", r"<b>\1</b>", text)
+        # Convert markdown inline code `code` to <code>code</code>
+        text = re.sub(r"`([^`]+)`", r"<code>\1</code>", text)
+
+        # Remove markdown headers
         text = re.sub(r"^#{1,6}\s+", "", text, flags=re.MULTILINE)
-        # Bold markdown ** → already have <b> tags from prompt
-        text = text.replace("**", "")
-        text = text.replace("__", "")
 
         # Remove unsupported HTML tags (keep only Telegram-safe ones)
         allowed_tags = {"b", "i", "u", "s", "code", "pre", "a", "tg-spoiler"}
@@ -310,7 +278,6 @@ class GeminiAnalysisService:
         def _clean_tag(m: re.Match) -> str:
             full = m.group(0)
             tag_name = m.group(1).lower().lstrip("/")
-            # Handle tags with attributes (like <a href="...">)
             if " " in tag_name:
                 tag_name = tag_name.split()[0]
             if tag_name in allowed_tags:
@@ -326,7 +293,7 @@ class GeminiAnalysisService:
         text = re.sub(r"\n{3,}", "\n\n", text)
         text = text.strip()
 
-        # Telegram message limit safety (leave room for the rest of the message)
+        # Telegram message limit safety
         max_length = 2500
         if len(text) > max_length:
             cut = text.rfind("\n", 0, max_length)
@@ -338,14 +305,22 @@ class GeminiAnalysisService:
 
         return text
 
-    def _fallback_analysis(self, raw_patch_notes: str | None) -> UpdateAnalysis:
-        """Fallback: basic BB-code → HTML formatting without AI."""
+    def _fallback_analysis(
+        self,
+        raw_patch_notes: str | None,
+        depot_diff_html: str | None = None,
+    ) -> UpdateAnalysis:
+        """Fallback: basic BB-code -> HTML formatting without AI."""
         if not raw_patch_notes:
             return UpdateAnalysis(
-                summary_html="<i>Официальные patch notes не опубликованы (бесшумный патч / технический хотфикс).</i>"
+                summary_html="<i>Официальные patch notes не опубликованы (бесшумный патч / технический хотфикс).</i>",
+                depot_diff_html=depot_diff_html,
             )
 
         from app.utils.formatting import format_steam_patchnotes_html
 
         formatted = format_steam_patchnotes_html(raw_patch_notes)
-        return UpdateAnalysis(summary_html=formatted)
+        return UpdateAnalysis(
+            summary_html=formatted,
+            depot_diff_html=depot_diff_html,
+        )

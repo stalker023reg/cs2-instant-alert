@@ -141,10 +141,9 @@ class UpdateService:
         depot_diff = data.compute_depot_diff(prev_manifests)
         depot_changes = {"changed": depot_diff} if depot_diff else {}
 
-        # Determine if it's critical based on size or changes
-        # For CS2, almost any client update is critical for server admins.
-        # We can implement smarter logic later.
-        is_critical = True
+        # Determine if it's critical algorithmically based on affected depots
+        from app.utils.depot_filter import determine_criticality
+        is_critical, _ = determine_criticality(depot_changes.get("changed"))
 
         update = Update(
             game_id=game_id,

@@ -155,7 +155,7 @@ class TestGeminiAnalysisService:
             mock_client.aio.models.generate_content = AsyncMock(return_value=mock_response)
 
             service = GeminiAnalysisService(api_key="valid-key")
-            manifest_changes = {"732": "111", "733": "222"}
+            manifest_changes = {"731": "111", "733": "222"}
 
             analysis = await service.analyze_update(
                 raw_patch_notes=None,
@@ -163,7 +163,7 @@ class TestGeminiAnalysisService:
             )
 
             assert "Бесшумный патч" in analysis.summary_html
-            assert "CS2 Dedicated Server" in analysis.depot_diff_html
+            assert "CS2 Client Content" in analysis.depot_diff_html
             assert "CS2 Binaries (Win64)" in analysis.depot_diff_html
             assert analysis.error is None
 
@@ -265,7 +265,7 @@ class TestFormatterAIAlert:
             depot_diff_html="  📦 <b>CS2 Binaries (Win64)</b>",
         )
 
-        assert "🤖 <b>AI-анализ</b>" in message
+        assert "🤖 <b>Разбор обновления (AI + Датамайнинг)</b>" in message
         assert "📋 <b>Patch Notes</b>" not in message
         assert "📦 <b>Изменённые компоненты</b>" in message
         assert "CS2 Binaries (Win64)" in message
@@ -296,7 +296,7 @@ class TestFormatterAIAlert:
         )
 
         assert "📋 <b>Patch Notes</b>" in message
-        assert "🤖 <b>AI-анализ</b>" not in message
+        assert "🤖 <b>Разбор обновления" not in message
         assert "📦 <b>Изменённые компоненты</b>" not in message
 
     def test_formatter_silent_update_ai_header(self) -> None:
@@ -324,7 +324,7 @@ class TestFormatterAIAlert:
             depot_diff_html="  📦 <b>CS2 Binaries (Win64)</b>",
         )
 
-        assert "🤖 <b>AI-анализ (Бесшумный патч)</b>" in message
+        assert "🤖 <b>Разбор обновления (AI + Датамайнинг)</b>" in message
         assert "📦 <b>Изменённые компоненты</b>" in message
         assert "CS2 Binaries (Win64)" in message
 
@@ -354,4 +354,4 @@ class TestFormatterAIAlert:
 
         assert "📦 <b>Изменённые компоненты</b>" in message
         assert "CS2 Dedicated Server" in message
-        assert "⏳ Ждём patch notes..." in message
+        assert "Анализируем файлы обновления и ждем распаковку дампа" in message

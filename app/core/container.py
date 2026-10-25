@@ -23,7 +23,9 @@ from app.services.admin_notifier import AdminNotifierService
 from app.services.health_service import HealthService
 from app.services.metrics_service import MetricsService
 from app.services.gemini_analysis_service import GeminiAnalysisService
+from app.services.github_datamine_fetcher import GitHubDatamineFetcher
 from app.services.patch_notes_service import PatchNotesService
+from app.services.steam_news_fetcher import SteamNewsFetcher
 from app.services.translation_service import TranslationService
 from app.services.watchdog import SilentWatchdogService
 from app.steam.client import AsyncSteamClient
@@ -172,6 +174,15 @@ class Container(containers.DeclarativeContainer):
         model=config.provided.gemini_model,
     )
 
+    steam_news_fetcher = providers.Singleton(
+        SteamNewsFetcher,
+    )
+
+    github_datamine_fetcher = providers.Singleton(
+        GitHubDatamineFetcher,
+        github_token=config.provided.github_token,
+    )
+
     patch_notes_service = providers.Singleton(
         PatchNotesService,
         session_factory=db_manager.provided.session,
@@ -179,6 +190,8 @@ class Container(containers.DeclarativeContainer):
         settings=config,
         translation_service=translation_service,
         gemini_service=gemini_analysis_service,
+        steam_news_fetcher=steam_news_fetcher,
+        github_fetcher=github_datamine_fetcher,
     )
 
     admin_notifier_service = providers.Singleton(

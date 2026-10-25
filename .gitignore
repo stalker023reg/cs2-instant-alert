@@ -108,3 +108,5 @@ test_supabase.py
 test_vps_conn.py
 trigger.py
 upload_*.py
+fly_logs.txt
+scan_downtime.py

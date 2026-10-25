@@ -1,12 +1,9 @@
 """
-CS2 Instant Alert — Patch Notes Service.
+CS2 Instant Alert — Patch Notes & Datamining Background Service.
 
-Background service that polls for official patch notes after an update
-is detected, and edits existing Telegram messages to include them.
-
-Supports two analysis modes:
-  1. AI Analysis (Gemini 2.5 Flash) — structured summary with categories
-  2. DeepL Translation — literal translation fallback
+Background service that polls for official patch notes (Steam News API)
+and real datamining git diffs (GameTracking-CS2) after an update is detected,
+runs AI analysis with Gemini Flash, and edits existing Telegram messages in-place.
 """
 
 from __future__ import annotations
@@ -24,6 +21,8 @@ from app.models.notification_history import NotificationHistory
 from app.notifications.channels.telegram import TelegramChannel
 from app.repositories.notification_repository import NotificationRepository
 from app.repositories.user_repository import UserRepository
+from app.services.github_datamine_fetcher import GitHubDatamineFetcher
+from app.services.steam_news_fetcher import SteamNewsFetcher
 from app.services.translation_service import TranslationService
 from app.utils.formatting import format_steam_patchnotes_html
 
@@ -34,7 +33,7 @@ logger = get_logger("system")
 
 
 class PatchNotesService:
-    """Polls for patch notes and updates delivered messages."""
+    """Polls for datamining diffs and patch notes, and updates delivered messages."""
 
     def __init__(
         self,
@@ -43,16 +42,27 @@ class PatchNotesService:
         settings: AppSettings,
         translation_service: TranslationService | None = None,
         gemini_service: GeminiAnalysisService | None = None,
+        steam_news_fetcher: SteamNewsFetcher | None = None,
+        github_fetcher: GitHubDatamineFetcher | None = None,
     ) -> None:
         self.session_factory = session_factory
         self.telegram = telegram_channel
         self.settings = settings
         self.translation = translation_service
         self.gemini = gemini_service
+
+        self.steam_news_fetcher = steam_news_fetcher or SteamNewsFetcher()
+        github_token = (
+            settings.github_token.get_secret_value()
+            if settings.github_token
+            else None
+        )
+        self.github_fetcher = github_fetcher or GitHubDatamineFetcher(github_token=github_token)
+
         self._tasks: set[asyncio.Task] = set()
 
     async def recover_pending_updates(self) -> None:
-        """Finds recent updates that haven't received patch notes and restarts polling."""
+        """Find recent updates that haven't received datamining/patch notes and restart polling."""
         from datetime import timedelta
 
         from sqlalchemy import select
@@ -60,21 +70,27 @@ class PatchNotesService:
         from app.models.update import Update
 
         now = datetime.now(UTC)
-        thirty_mins_ago = now - timedelta(minutes=30)
+        twenty_mins_ago = now - timedelta(minutes=20)
 
         async with self.session_factory() as session:
-            stmt = select(Update).where(Update.detected_at >= thirty_mins_ago)
+            stmt = select(Update).where(Update.detected_at >= twenty_mins_ago)
             result = await session.execute(stmt)
             updates = result.scalars().all()
 
             for update in updates:
                 history_stmt = select(NotificationHistory).where(
                     NotificationHistory.update_id == update.id,
-                    NotificationHistory.last_edit_reason.in_(["PATCH_NOTES_ADDED", "PATCH_NOTES_TIMEOUT"])
+                    NotificationHistory.last_edit_reason.in_([
+                        "DATAMINE_ANALYZED",
+                        "PATCH_NOTES_ADDED",
+                        "DATAMINE_TIMEOUT",
+                        "PATCH_NOTES_TIMEOUT",
+                    ]),
                 )
                 history_result = await session.execute(history_stmt)
                 if not history_result.scalars().first():
                     from app.steam.types import AppUpdateData
+
                     event = UpdateDetectedEvent(
                         update_id=update.id,
                         game_id=update.game_id,
@@ -91,92 +107,77 @@ class PatchNotesService:
                                 checked_at=update.detected_at,
                             )
                         ),
+                        depot_changes=update.depot_changes.get("changed") if update.depot_changes else None,
                     )
                     await self.start_polling_for_update(event)
-                    await logger.ainfo("patch_notes_polling_recovered", update_id=str(update.id))
+                    await logger.ainfo("datamine_polling_recovered", update_id=str(update.id))
 
     async def start_polling_for_update(self, event: UpdateDetectedEvent) -> None:
         """
-        Spawn a background task to poll for patch notes for this specific update.
-        Will poll for up to 30 minutes.
+        Spawn a background task to poll for datamining diffs and patch notes.
+        Polls every 45 seconds for up to 20 minutes.
         """
         task = asyncio.create_task(
             self._poll_loop(event),
-            name=f"PatchNotesPoll_{event.update_id}"
+            name=f"DataminePoll_{event.update_id}",
         )
         self._tasks.add(task)
         task.add_done_callback(self._tasks.discard)
 
     async def _poll_loop(self, event: UpdateDetectedEvent) -> None:
-        """Polls Steam News API for patch notes."""
+        """
+        Stage 2 Background Polling:
+        Every 45 seconds checks Steam News API and GameTracking-CS2.
+        """
         start_time = datetime.now(UTC)
-        max_duration = 15 * 60  # 15 minutes
-        poll_interval = 60  # 1 minute
+        max_duration = 20 * 60  # 20 minutes
+        poll_interval = 45  # 45 seconds
 
-        await logger.ainfo("patch_notes_polling_started", update_id=str(event.update_id))
+        await logger.ainfo(
+            "datamine_polling_started",
+            update_id=str(event.update_id),
+            build_id=event.build_id,
+        )
 
         try:
-            import httpx
+            while True:
+                now = datetime.now(UTC)
+                elapsed = (now - start_time).total_seconds()
+                if elapsed > max_duration:
+                    await logger.ainfo("datamine_polling_timeout", update_id=str(event.update_id))
+                    await self._handle_timeout(event)
+                    break
 
-            async with httpx.AsyncClient(timeout=15.0) as client:
-                while True:
-                    try:
-                        now = datetime.now(UTC)
-                        if (now - start_time).total_seconds() > max_duration:
-                            await logger.ainfo("patch_notes_polling_timeout", update_id=str(event.update_id))
-                            await self._process_silent_update_and_edit(event)
-                            break
+                try:
+                    # 1. Check Steam News API
+                    news_item = await self.steam_news_fetcher.fetch_latest_patchnotes(event.detected_at)
 
-                        # Steam News expects the numeric app id, not our database UUID.
-                        url = f"https://api.steampowered.com/ISteamNews/GetNewsForApp/v2/?appid={CS2_APP_ID}&count=3"
-                        resp = await client.get(url)
-                        if resp.status_code == 200:
-                            data = resp.json()
-                            newsitems = data.get("appnews", {}).get("newsitems", [])
+                    # 2. Check GitHub GameTracking-CS2
+                    datamine_commit = await self.github_fetcher.fetch_matching_commit(event.detected_at)
 
-                            for item in newsitems:
-                                # Check if it's a patch notes post
-                                title = item.get("title", "").lower()
-                                if "release notes" in title or "update" in title:
-                                    post_date = datetime.fromtimestamp(item.get("date", 0), tz=UTC)
-                                    time_diff = abs((post_date - event.detected_at).total_seconds())
-                                    if time_diff < 7200:
-                                        await logger.ainfo("PatchNotesFound", update_id=str(event.update_id))
+                    # If we found datamining commit OR official patch notes, process and edit!
+                    if news_item or datamine_commit:
+                        await logger.ainfo(
+                            "datamine_source_ready",
+                            update_id=str(event.update_id),
+                            has_news=bool(news_item),
+                            has_commit=bool(datamine_commit),
+                            patch_version=datamine_commit.patch_version if datamine_commit else None,
+                        )
 
-                                        from app.repositories.update_repository import (
-                                            UpdateRepository,
-                                        )
-                                        async with self.session_factory() as temp_session:
-                                            update_repo = UpdateRepository(temp_session)
-                                            await update_repo.append_timeline_event(
-                                                update_id=event.update_id,
-                                                event_type="patch_notes_found",
-                                                source="Steam Web API",
-                                                metadata={"gid": item.get('gid', '')}
-                                            )
-                                            patch_url = (
-                                                f"https://steamcommunity.com/games/{CS2_APP_ID}"
-                                                f"/announcements/detail/{item.get('gid', '')}"
-                                            )
-                                            await update_repo.update_patch_notes(
-                                                event.update_id,
-                                                item.get("contents", ""),
-                                                patch_url,
-                                            )
-                                            await temp_session.commit()
+                        await self._process_and_edit(
+                            event=event,
+                            news_item=news_item,
+                            datamine_commit=datamine_commit,
+                        )
+                        return
 
-                                        # ─── Process patch notes ───
-                                        raw_contents = item.get("contents", "")
-                                        await self._process_and_edit(
-                                            event, raw_contents, patch_url,
-                                        )
-                                        return
-                    except asyncio.CancelledError:
-                        raise
-                    except Exception as e:
-                        await logger.aerror("patch_notes_polling_error", error=str(e), exc_info=True)
+                except asyncio.CancelledError:
+                    raise
+                except Exception as e:
+                    await logger.aerror("datamine_polling_tick_error", error=str(e), exc_info=True)
 
-                    await asyncio.sleep(poll_interval)
+                await asyncio.sleep(poll_interval)
 
         except asyncio.CancelledError:
             pass
@@ -184,126 +185,100 @@ class PatchNotesService:
     async def _process_and_edit(
         self,
         event: UpdateDetectedEvent,
-        raw_contents: str,
-        patch_url: str,
+        news_item: Any | None,
+        datamine_commit: Any | None,
     ) -> None:
-        """
-        Process raw patch notes through AI or translation, then edit messages.
+        """Run LLM analysis on real diff + patch notes and edit delivered Telegram messages."""
+        raw_patch_notes = news_item.contents if news_item else None
+        patch_url = news_item.url if news_item else None
 
-        Priority:
-          1. Gemini AI analysis (structured summary + depot diff)
-          2. DeepL translation (literal translation, fallback)
-          3. BB-code formatting only (no translation)
-        """
-        ai_analyzed = False
-        depot_diff_html: str | None = None
-        formatted_html: str | None = None
-
-        # ─── Try AI analysis first ───
-        if self.gemini and self.gemini.is_available:
-            try:
-                # Fetch manifest changes for depot diff context
-                manifest_changes = await self._get_manifest_changes(event.update_id)
-
-                analysis = await self.gemini.analyze_update(
-                    raw_patch_notes=raw_contents,
-                    manifest_changes=manifest_changes,
-                )
-
-                formatted_html = analysis.summary_html
-                depot_diff_html = analysis.depot_diff_html
-                ai_analyzed = True
-
-                await logger.ainfo(
-                    "patch_notes_ai_analyzed",
-                    update_id=str(event.update_id),
-                    has_depot_diff=bool(depot_diff_html),
-                    error=analysis.error,
-                )
-
-                # If AI analysis had an error, it already fell back internally
-                if analysis.error:
-                    ai_analyzed = False
-
-            except Exception as e:
-                await logger.awarning(
-                    "gemini_analysis_skipped",
-                    error=str(e),
-                    update_id=str(event.update_id),
-                )
-                formatted_html = None
-                ai_analyzed = False
-
-        # ─── Fallback: DeepL translation or basic formatting ───
-        if not ai_analyzed or formatted_html is None:
-            formatted_html = format_steam_patchnotes_html(raw_contents)
-
-            # Translate to Russian via DeepL
-            if self.translation and self.translation.is_available:
-                formatted_html = await self.translation.translate_to_russian(formatted_html)
-
-        await self._edit_messages(
-            event,
-            formatted_html,
-            patch_url,
-            ai_analyzed=ai_analyzed,
-            depot_diff_html=depot_diff_html,
-        )
-
-    async def _process_silent_update_and_edit(
-        self,
-        event: UpdateDetectedEvent,
-    ) -> None:
-        """
-        Handle a silent update when no patch notes are published by Valve.
-
-        Runs Gemini AI analysis purely on the changed depots, then edits messages.
-        """
-        ai_analyzed = False
-        depot_diff_html: str | None = None
-        formatted_html: str | None = None
+        git_diff = datamine_commit.filtered_diff if datamine_commit else None
+        patch_version = datamine_commit.patch_version if datamine_commit else None
 
         manifest_changes = await self._get_manifest_changes(event.update_id)
 
+        ai_analyzed = False
+        formatted_html: str | None = None
+        depot_diff_html: str | None = None
+
+        # ─── 1. Run Gemini Anti-Hallucination Analysis ───
         if self.gemini and self.gemini.is_available:
             try:
                 analysis = await self.gemini.analyze_update(
-                    raw_patch_notes=None,
+                    raw_patch_notes=raw_patch_notes,
+                    git_diff=git_diff,
+                    patch_version=patch_version,
                     manifest_changes=manifest_changes,
                 )
                 formatted_html = analysis.summary_html
                 depot_diff_html = analysis.depot_diff_html
                 ai_analyzed = True
 
-                await logger.ainfo(
-                    "silent_update_ai_analyzed",
-                    update_id=str(event.update_id),
-                    has_depot_diff=bool(depot_diff_html),
-                    error=analysis.error,
-                )
-
                 if analysis.error:
                     ai_analyzed = False
+
             except Exception as e:
-                await logger.awarning(
-                    "silent_update_gemini_skipped",
-                    error=str(e),
-                    update_id=str(event.update_id),
-                )
+                await logger.awarning("gemini_datamine_analysis_failed", error=str(e))
                 ai_analyzed = False
 
-        if not formatted_html or not ai_analyzed:
-            formatted_html = "<i>Официальные patch notes не опубликованы (бесшумный патч / технический хотфикс).</i>"
-            if self.gemini and manifest_changes:
-                depot_diff_html = self.gemini._format_depot_diff_html(manifest_changes)
+        # ─── 2. Fallbacks if Gemini unavailable ───
+        if not formatted_html:
+            if raw_patch_notes:
+                formatted_html = format_steam_patchnotes_html(raw_patch_notes)
+                if self.translation and self.translation.is_available:
+                    formatted_html = await self.translation.translate_to_russian(formatted_html)
+            elif git_diff:
+                formatted_html = "<i>Файлы обновления получены из GameTracking-CS2, но AI-анализ временно недоступен.</i>"
+            else:
+                formatted_html = "<i>Техническое обновление исполняемых файлов без изменений в геймплее, настройках и интерфейсе.</i>"
 
+        # ─── 3. Update Database ───
+        try:
+            from app.repositories.update_repository import UpdateRepository
+
+            async with self.session_factory() as session:
+                update_repo = UpdateRepository(session)
+                await update_repo.append_timeline_event(
+                    update_id=event.update_id,
+                    event_type="datamine_analysis_completed",
+                    source="GitHub / Steam News",
+                    metadata={
+                        "patch_version": patch_version,
+                        "commit_sha": datamine_commit.commit_sha if datamine_commit else None,
+                        "news_gid": news_item.gid if news_item else None,
+                        "ai_analyzed": ai_analyzed,
+                    },
+                )
+                await update_repo.update_patch_notes(
+                    event.update_id,
+                    raw_patch_notes or "",
+                    patch_url or (datamine_commit.commit_url if datamine_commit else None),
+                )
+                await session.commit()
+        except Exception as db_err:
+            await logger.awarning("datamine_db_update_failed", error=str(db_err))
+
+        # ─── 4. Edit Delivered Messages ───
         await self._edit_messages(
-            event,
-            formatted_html,
-            patch_url=None,
-            is_timeout=False,
+            event=event,
+            patch_notes_html=formatted_html,
+            patch_url=patch_url,
+            patch_version=patch_version,
             ai_analyzed=ai_analyzed,
             depot_diff_html=depot_diff_html,
+            is_timeout=False,
+        )
+
+    async def _handle_timeout(self, event: UpdateDetectedEvent) -> None:
+        """Handle 20-minute timeout when no commit or patch notes appeared."""
+        await self._edit_messages(
+            event=event,
+            patch_notes_html=None,
+            patch_url=None,
+            patch_version=None,
+            ai_analyzed=False,
+            depot_diff_html=None,
+            is_timeout=True,
         )
 
     async def _get_manifest_changes(self, update_id: uuid.UUID) -> dict[str, Any] | None:
@@ -311,6 +286,7 @@ class PatchNotesService:
         try:
             async with self.session_factory() as session:
                 from app.repositories.update_repository import UpdateRepository
+
                 repo = UpdateRepository(session)
                 update = await repo.get_by_id(update_id)
                 if update:
@@ -327,14 +303,16 @@ class PatchNotesService:
     async def _edit_messages(
         self,
         event: UpdateDetectedEvent,
-        patch_notes_html: str,
+        patch_notes_html: str | None,
         patch_url: str | None = None,
+        patch_version: str | None = None,
         is_timeout: bool = False,
         ai_analyzed: bool = False,
         depot_diff_html: str | None = None,
     ) -> None:
-        """Find delivered Telegram messages for this update and edit them."""
+        """Find delivered Telegram messages for this update and edit them in-place."""
         from sqlalchemy import select
+
         async with self.session_factory() as session:
             repo = NotificationRepository(session)
             user_repo = UserRepository(session)
@@ -342,7 +320,7 @@ class PatchNotesService:
             stmt = select(NotificationHistory).where(
                 NotificationHistory.update_id == event.update_id,
                 NotificationHistory.channel_type == "telegram",
-                NotificationHistory.provider_message_id.is_not(None)
+                NotificationHistory.provider_message_id.is_not(None),
             )
             result = await session.execute(stmt)
             histories = result.scalars().all()
@@ -350,38 +328,42 @@ class PatchNotesService:
             for history in histories:
                 user = await user_repo.get_by_id(history.user_id)
                 if user and history.provider_message_id:
-                    if is_timeout:
-                        await repo.update_history(history, last_edit_reason="PATCH_NOTES_TIMEOUT")
-                    else:
-                        await self.telegram.edit_update_alert(
-                            user=user,
-                            message_id=history.provider_message_id,
-                            event=event,
-                            patch_notes_html=patch_notes_html,
-                            patch_url=patch_url,
-                            ai_analyzed=ai_analyzed,
-                            depot_diff_html=depot_diff_html,
-                        )
-                        edit_reason = "SILENT_UPDATE_ANALYZED" if patch_url is None else "PATCH_NOTES_ADDED"
-                        await repo.update_history(
-                            history,
-                            last_edit_reason=edit_reason,
-                            edited_at=datetime.now(UTC),
-                            current_message_version=history.current_message_version + 1
-                        )
+                    await self.telegram.edit_update_alert(
+                        user=user,
+                        message_id=history.provider_message_id,
+                        event=event,
+                        patch_notes_html=patch_notes_html,
+                        patch_url=patch_url,
+                        ai_analyzed=ai_analyzed,
+                        depot_diff_html=depot_diff_html,
+                        patch_version=patch_version,
+                        is_timeout=is_timeout,
+                    )
 
-                        from app.repositories.update_repository import UpdateRepository
-                        update_repo = UpdateRepository(session)
-                        await update_repo.append_timeline_event(
-                            update_id=event.update_id,
-                            event_type="message_edited",
-                            source="Telegram Channel",
-                            metadata={
-                                "user_id": str(user.id),
-                                "message_id": history.provider_message_id,
-                                "ai_analyzed": ai_analyzed,
-                            }
-                        )
+                    edit_reason = "DATAMINE_TIMEOUT" if is_timeout else "DATAMINE_ANALYZED"
+                    await repo.update_history(
+                        history,
+                        last_edit_reason=edit_reason,
+                        edited_at=datetime.now(UTC),
+                        current_message_version=history.current_message_version + 1,
+                    )
+
+                    from app.repositories.update_repository import UpdateRepository
+
+                    update_repo = UpdateRepository(session)
+                    await update_repo.append_timeline_event(
+                        update_id=event.update_id,
+                        event_type="message_edited",
+                        source="Telegram Channel",
+                        metadata={
+                            "user_id": str(user.id),
+                            "message_id": history.provider_message_id,
+                            "ai_analyzed": ai_analyzed,
+                            "patch_version": patch_version,
+                            "is_timeout": is_timeout,
+                        },
+                    )
+
             await session.commit()
 
     async def stop(self) -> None:
