@@ -28,6 +28,15 @@ def format_datetime(dt: datetime, tz_name: str = "UTC") -> str:
     return local_dt.strftime("%Y-%m-%d %H:%M:%S") + tz_suffix
 
 
+def format_date(dt: datetime, tz_name: str = "Europe/Moscow") -> str:
+    """Format date as DD.MM.YYYY in user timezone."""
+    try:
+        local_dt = to_user_tz(dt, tz_name)
+    except Exception:
+        local_dt = dt
+    return local_dt.strftime("%d.%m.%Y")
+
+
 def format_time_ago(dt: datetime) -> str:
     """Format a datetime as a human-readable 'time ago' string."""
     now = utc_now()

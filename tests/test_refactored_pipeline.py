@@ -76,25 +76,32 @@ class TestTelegramFormatter(unittest.TestCase):
         )
 
     def test_stage_1_instant_alert(self):
-        filtered, tech_count = filter_depots(self.event.depot_changes)
-        depot_html = format_depots_html(filtered, tech_count)
-
         msg = TelegramFormatter.format_update_alert(
             event=self.event,
             timezone="UTC",
-            depot_diff_html=depot_html,
         )
 
         self.assertIn("Обновление CS2", msg)
-        self.assertIn("26087496", msg)
-        self.assertIn("26087111", msg)
-        self.assertIn("CS2 Client Content", msg)
-        self.assertIn("Анализируем файлы обновления и ждем распаковку дампа", msg)
+        self.assertNotIn("Изменённые компоненты", msg)
+        self.assertIn("Вышло обновление! Ожидаем публикацию списка изменений от Valve...", msg)
 
-    def test_stage_2_edited_alert(self):
+    def test_stage_2_official_notes_waiting_datamine(self):
+        msg = TelegramFormatter.format_update_alert(
+            event=self.event,
+            timezone="UTC",
+            patch_notes_html="• Исправлен баг со звуком",
+            is_waiting_datamine=True,
+        )
+
+        self.assertIn("Официальный патчноут Valve", msg)
+        self.assertIn("Исправлен баг со звуком", msg)
+        self.assertIn("Файлы обновления уже распаковываются датамайнерами", msg)
+
+    def test_stage_3_final_ai_alert(self):
         analysis_html = (
-            "🧰 <b>Основной патчноут</b>\n• Исправлены ошибки на картах\n\n"
-            "🕵️ <b>Не вошло в патчноут (Датамайнинг)</b>\n• <code>sv_cheats</code> обновлен"
+            "🧰 <b>Дополненный патчноут</b>\n• Исправлены ошибки на картах\n\n"
+            "🕵️ <b>Не вошло в патчноут</b>\n• <code>sv_cheats</code> обновлен\n\n"
+            "🔧 <b>Внутренняя разработка</b>\n• Новая модель LAR"
         )
         msg = TelegramFormatter.format_update_alert(
             event=self.event,
@@ -106,10 +113,12 @@ class TestTelegramFormatter(unittest.TestCase):
         )
 
         self.assertIn("1.41.9.2", msg)
-        self.assertIn("Разбор обновления (AI + Датамайнинг)", msg)
+        self.assertIn("Дополненный патчноут", msg)
         self.assertIn("sv_cheats", msg)
+        self.assertIn("Внутренняя разработка", msg)
         self.assertIn("https://steamcommunity.com/announcements/detail/123", msg)
-        self.assertNotIn("Анализируем файлы обновления", msg)
+        self.assertNotIn("Ожидаем публикацию", msg)
+        self.assertNotIn("распаковываются датамайнерами", msg)
 
     def test_stage_2_timeout_alert(self):
         msg = TelegramFormatter.format_update_alert(
@@ -117,7 +126,7 @@ class TestTelegramFormatter(unittest.TestCase):
             timezone="UTC",
             is_timeout=True,
         )
-        self.assertIn("Техническое обновление без публичного списка изменений", msg)
+        self.assertIn("Техническое обновление исполняемых файлов", msg)
         self.assertNotIn("Анализируем файлы обновления", msg)
 
 
@@ -182,8 +191,7 @@ class TestGeminiPromptAndSanitization(unittest.TestCase):
             patch_version="1.41.9.2",
         )
 
-        self.assertIn("ЗАПРЕТ НА ГАЛЛЮЦИНАЦИИ", prompt)
-        self.assertIn("КАТЕГОРИЧЕСКИ ЗАПРЕЩЕНО выдумывать изменения", prompt)
+        self.assertIn("КАТЕГОРИЧЕСКИ ЗАПРЕЩЕНО", prompt)
         self.assertIn("1.41.9.2", prompt)
         self.assertIn("Fixed bomb sound bug.", prompt)
         self.assertIn("snd_bomb_fix 1", prompt)

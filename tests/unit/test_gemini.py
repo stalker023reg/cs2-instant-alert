@@ -265,10 +265,9 @@ class TestFormatterAIAlert:
             depot_diff_html="  📦 <b>CS2 Binaries (Win64)</b>",
         )
 
-        assert "🤖 <b>Разбор обновления (AI + Датамайнинг)</b>" in message
-        assert "📋 <b>Patch Notes</b>" not in message
-        assert "📦 <b>Изменённые компоненты</b>" in message
-        assert "CS2 Binaries (Win64)" in message
+        assert "Важный патч" in message
+        assert "📋 <b>Официальный патчноут Valve</b>" not in message
+        assert "📦 <b>Изменённые компоненты</b>" not in message
         assert "https://store.steampowered.com/news/123" in message
 
     def test_formatter_without_ai_analysis_fallback(self) -> None:
@@ -295,8 +294,8 @@ class TestFormatterAIAlert:
             depot_diff_html=None,
         )
 
-        assert "📋 <b>Patch Notes</b>" in message
-        assert "🤖 <b>Разбор обновления" not in message
+        assert "📋 <b>Официальный патчноут Valve</b>" in message
+        assert "Some raw patch notes" in message
         assert "📦 <b>Изменённые компоненты</b>" not in message
 
     def test_formatter_silent_update_ai_header(self) -> None:
@@ -321,14 +320,12 @@ class TestFormatterAIAlert:
             patch_notes_html="<b>TL;DR:</b> Бесшумный хотфикс",
             patch_url=None,  # No steam community URL -> Silent update!
             ai_analyzed=True,
-            depot_diff_html="  📦 <b>CS2 Binaries (Win64)</b>",
         )
 
-        assert "🤖 <b>Разбор обновления (AI + Датамайнинг)</b>" in message
-        assert "📦 <b>Изменённые компоненты</b>" in message
-        assert "CS2 Binaries (Win64)" in message
+        assert "Бесшумный хотфикс" in message
+        assert "📦 <b>Изменённые компоненты</b>" not in message
 
-    def test_formatter_initial_alert_with_depot_diff(self) -> None:
+    def test_formatter_initial_alert(self) -> None:
         raw_data = AppUpdateData(
             app_id=730,
             source=SteamSource.PICS,
@@ -344,14 +341,12 @@ class TestFormatterAIAlert:
             raw_data=raw_data,
         )
 
-        # In initial alert, patch_notes_html is None, but depot_diff_html is known
+        # In initial alert, patch_notes_html is None
         message = TelegramFormatter.format_update_alert(
             event=event,
             timezone="UTC",
             patch_notes_html=None,
-            depot_diff_html="  📦 <b>CS2 Dedicated Server</b>",
         )
 
-        assert "📦 <b>Изменённые компоненты</b>" in message
-        assert "CS2 Dedicated Server" in message
-        assert "Анализируем файлы обновления и ждем распаковку дампа" in message
+        assert "📦 <b>Изменённые компоненты</b>" not in message
+        assert "Вышло обновление! Ожидаем публикацию списка изменений от Valve..." in message

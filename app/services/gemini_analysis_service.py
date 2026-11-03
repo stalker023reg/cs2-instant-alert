@@ -34,12 +34,12 @@ class GeminiAnalysisService:
     Strictly follows anti-hallucination guidelines.
     """
 
-    MODEL = "gemini-3.8-flash"
+    MODEL = "gemini-3.5-flash"
 
     def __init__(
         self,
         api_key: str | None = None,
-        model: str = "gemini-3.8-flash",
+        model: str = "gemini-3.5-flash",
     ) -> None:
         self._client = None
         self.model = model
@@ -104,9 +104,14 @@ class GeminiAnalysisService:
                 patch_version=patch_version,
             )
 
-            # Call Gemini Flash with fallback across models if high demand
+            # Call Gemini Flash with fallback across stable active models
             models_to_try = [self.model]
-            for fallback_name in ("gemini-flash-latest", "gemini-2.5-flash-lite"):
+            for fallback_name in (
+                "gemini-3.6-flash",
+                "gemini-3.5-flash-lite",
+                "gemini-3.8-flash",
+                "gemini-flash-latest",
+            ):
                 if fallback_name not in models_to_try:
                     models_to_try.append(fallback_name)
 
@@ -115,27 +120,37 @@ class GeminiAnalysisService:
             last_err = None
 
             for model_name in models_to_try:
-                try:
-                    response = await self._client.aio.models.generate_content(
-                        model=model_name,
-                        contents=prompt,
-                    )
-                    if response and response.text:
-                        used_model = model_name
+                for attempt in range(2):
+                    try:
+                        response = await self._client.aio.models.generate_content(
+                            model=model_name,
+                            contents=prompt,
+                        )
+                        if response and response.text:
+                            used_model = model_name
+                            break
+                    except Exception as model_err:
+                        last_err = model_err
+                        err_str = str(model_err)
+                        await logger.awarning(
+                            "gemini_model_attempt_failed",
+                            model=model_name,
+                            attempt=attempt + 1,
+                            error=err_str,
+                        )
+                        if "503" in err_str or "429" in err_str:
+                            import asyncio
+                            await asyncio.sleep(1.0)
+                            continue
                         break
-                except Exception as model_err:
-                    last_err = model_err
-                    await logger.awarning(
-                        "gemini_model_attempt_failed",
-                        model=model_name,
-                        error=str(model_err),
-                    )
+                if response and response.text:
+                    break
 
             if not response or not response.text:
                 if last_err:
                     raise last_err
                 await logger.awarning("gemini_empty_response")
-                return self._fallback_analysis(raw_patch_notes, depot_diff_html)
+                return self._fallback_analysis(raw_patch_notes, depot_diff_html, git_diff)
 
             ai_text = response.text.strip()
             summary_html = self._sanitize_telegram_html(ai_text)
@@ -156,7 +171,7 @@ class GeminiAnalysisService:
 
         except Exception as e:
             await logger.aerror("gemini_analysis_failed", error=str(e), exc_info=True)
-            result = self._fallback_analysis(raw_patch_notes, depot_diff_html)
+            result = self._fallback_analysis(raw_patch_notes, depot_diff_html, git_diff)
             result.error = str(e)
             return result
 
@@ -193,34 +208,58 @@ class GeminiAnalysisService:
 Если в депо изменились файлы, о которых ничего не сказано в тексте, отметь затронутые компоненты.
 """
 
-        return f"""Ты — старший технический аналитик и датамайнер обновлений Counter-Strike 2.
+        return f"""Ты — автор Telegram-канала по Counter-Strike 2, который пишет понятные, интересные и лаконичные разборы обновлений для обычных игроков.
 {version_header}
 На вход ты получаешь:
-1. Официальный патчноут от Valve (может отсутствовать, если патч технический / бесшумный патч).
-2. Реальный Git Diff измененных файлов игры из репозитория GameTracking-CS2 (консольные переменные, файлы скриптинга .d.ts, интерфейс Panorama UI, локализация, протобафы).
+1. Официальный патчноут от Valve (может отсутствовать, если патч технический / «бесшумный»).
+2. Реальный Git Diff измененных файлов игры из репозитория GameTracking-CS2.
 
-Твоя задача — составить точный, профессиональный разбор обновления на русском языке для Telegram-канала.
+Твоя цель — объяснить ОБЫЧНОМУ ИГРОКУ, что изменилось в игре, простым, понятным и живым русским языком, без программистского мусора.
 
-СТРОГИЕ ПРАВИЛА (ЗАПРЕТ НА ГАЛЛЮЦИНАЦИИ):
-1. КАТЕГОРИЧЕСКИ ЗАПРЕЩЕНО выдумывать изменения, которых нет во входных данных. Никогда не пиши общие фразы вроде «вероятно, обновлены сигнатуры VAC», «устранены утечки памяти», «исправлены эксплойты или геометрия карт», если это прямо не следует из предоставленного кода/текста.
-2. Запрещено использовать слова-догадки: «вероятно», «скорее всего», «как правило», «возможно». Опирайся только на факты из diff и патчноута.
-3. Сохраняй точные названия новых или измененных классов, методов, событий и консольных команд (ConVars) в моноширинном формате (<code>код</code>), указывая их значения по умолчанию, если они видны в диффе.
+ГЛАВНЫЕ ПРАВИЛА (ДЛЯ ИГРОКОВ, А НЕ ПРОГРАММИСТОВ):
+1. ПИШИ О СУТИ ИЗМЕНЕНИЙ В САМОЙ ИГРЕ:
+   - Объясняй человеческими словами, что увидит или почувствует игрок в матче или меню.
+   - КАТЕГОРИЧЕСКИ ЗАПРЕЩЕНО вставлять в текст имена файлов исходников (например, matchinfo.js), названия внутренних функций/методов API (например, MatchInfoAPI.GetMatchPlayerRoundStats, FindChildInLayoutFile), CSS-классы (например, mi-player-stats__collapse), названия XML-файлов или JS-переменных.
+   - Вместо кода пиши понятным языком: «В карточке матча скрыли подробную статистику игрока, если матч ещё идёт или данные по раундам отсутствуют».
 
-ФОРМАТ ОТВЕТА:
-Используй чистую верстку для Telegram (используй ТОЛЬКО теги <b>жирный</b>, <i>курсив</i>, <code>код</code>).
-Раздели отчет на блоки (выводи блок только если для него есть реальные данные во входных материалах):
+2. ЛОКАЛИЗАЦИЯ И СТАТУСЫ (RICH PRESENCE):
+   - КАТЕГОРИЧЕСКИ ЗАПРЕЩЕНО выводить списки технических ключей (вроде SFUI_Lobby_StatusRichPresence_...).
+   - Объединяй их в одно емкое и грамотное предложение. Например: «Для карт Мастерской добавлены отдельные английские статусы активности: лобби, игра, сервер сообщества, наблюдение за матчем и просмотр записи».
 
-🧰 <b>Основной патчноут и скриптинг</b>
-• Перевод официального патчноута на русский язык.
-• Если в диффе есть изменения point_script.d.ts (или других API), подробно и структурированно перечисли новые классы, методы, свойства, события и исправления типов (как дополнение к патчноуту).
+3. КОНСОЛЬНЫЕ ПЕРЕМЕННЫЕ (ConVars):
+   - Консольные команды выделяй тегом <code>команда</code> ТОЛЬКО если это реальная переменная, которую игрок может ввести в консоли CS2 (например, <code>cl_weapon_stealth_reload_toggle</code>), с кратким пояснением её работы (0 - удерживать, 1 - переключать). Внутренние параметры движка, недоступные игрокам, упоминать не нужно.
 
-🕵️ <b>Не вошло в патчноут (Датамайнинг)</b>
-• <b>Консоль и настройки:</b> новые или измененные команды из convars.txt / commands.txt и за что они отвечают (исходя из их описания в диффе).
-• <b>Интерфейс (Panorama UI):</b> что именно изменилось в верстке/стилях (.css / .xml / .js) — например, размеры панелей, цвета, новые элементы меню или HUD.
-• <b>Локализация и ресурсы:</b> новые текстовые строки или упоминания контента.
+4. РАЗДЕЛ «ВНУТРЕННЯЯ РАЗРАБОТКА»:
+   - Создавай раздел 🔧 <b>Внутренняя разработка</b> ТОЛЬКО если в файлах найдены реальные утечки будущего контента: новое оружие (например, винтовка M14 / LAR), новые ножи, скины, брелоки, карты, новые терминалы или временные файлы в папке do_not_ship.
+   - СТРОЖАЙШЕ ЗАПРЕЩЕНО писать о служебных таймстампах компиляции, датах сборки бинарных файлов (engine2, hammer, resourcecompiler, csgocfg и др.) и строках компилятора в *_strings.txt! Для игроков это бесполезный шум. Если в обновлении нет утечек реального контента — НЕ создавай блок «Внутренняя разработка».
+
+5. ФОРМАТИРОВАНИЕ ДЛЯ TELEGRAM:
+   - Используй ТОЛЬКО разрешенные теги: <b>жирный</b>, <i>курсив</i>, <code>код</code>.
+
+СТРУКТУРА ОТВЕТА:
+Если официальный патчноут ЕСТЬ:
+🧰 <b>Дополненный патчноут</b>
+• [Качественный перевод пункта патчноута] (если к нему есть ConVar — укажи <code>команду</code>)
+
+🕵️ <b>Не вошло в патчноут</b>
+(Скрытые изменения, о которых Valve умолчала в патчноуте):
+• [Скрытое изменение простым языком]
+
+Если официального патчноута НЕТ:
+Первая строка:
+Официального списка изменений пока нет
+
+Далее блок:
+🧰 <b>По анализу файлов игры</b>
+• [Изменение в интерфейсе, звуках или геймплее простым языком]
+
+Если есть реальные утечки будущего контента (оружие, модели, карты):
+🔧 <b>Внутренняя разработка</b>
+• [Суть утечки простым языком]
+
 {undocumented_instructions}
-Если официального патчноута нет, а в Git Diff не нашлось изменений в командах, UI, скриптах или локализации — напиши ровно одно предложение:
-Техническое обновление исполняемых файлов без изменений в геймплее, настройках и интерфейсе.
+Если в патче совсем нет изменений в интерфейсе, геймплее, звуках, строках или прототипах (только компиляция бинарников) — напиши ровно:
+<i>Техническое обновление исполняемых файлов без изменений в геймплее, настройках и интерфейсе.</i>
 
 ВХОДНЫЕ ДАННЫЕ:
 {patch_notes_section}
@@ -309,11 +348,16 @@ class GeminiAnalysisService:
         self,
         raw_patch_notes: str | None,
         depot_diff_html: str | None = None,
+        git_diff: str | None = None,
     ) -> UpdateAnalysis:
-        """Fallback: basic BB-code -> HTML formatting without AI."""
+        """Fallback when Gemini API fails."""
         if not raw_patch_notes:
+            if git_diff and git_diff.strip():
+                summary = "<i>Официальный патчноут от Valve отсутствует. Зафиксированы изменения файлов в GameTracking-CS2, но автоматический AI-анализ временно недоступен.</i>"
+            else:
+                summary = "<i>Официальные patch notes не опубликованы (бесшумный патч / технический хотфикс).</i>"
             return UpdateAnalysis(
-                summary_html="<i>Официальные patch notes не опубликованы (бесшумный патч / технический хотфикс).</i>",
+                summary_html=summary,
                 depot_diff_html=depot_diff_html,
             )
 

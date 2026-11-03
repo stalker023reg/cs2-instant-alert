@@ -44,20 +44,10 @@ class TelegramChannel(AbstractNotificationChannel):
         if not self.bot:
             raise ChannelDeliveryError("Telegram bot token not configured", code="TG_NO_TOKEN")
 
-        # Format depot diff using clean filtering (excluding macOS and raw tech depots)
-        depot_diff_html = None
-        if event.depot_changes:
-            from app.utils.depot_filter import filter_depots, format_depots_html
-
-            filtered_depots, tech_count = filter_depots(event.depot_changes)
-            if filtered_depots or tech_count:
-                depot_diff_html = format_depots_html(filtered_depots, tech_count)
-
         text = TelegramFormatter.format_update_alert(
             event=event,
             timezone=user.timezone,
             language=user.language,
-            depot_diff_html=depot_diff_html,
         )
 
         # Acknowledgement button removed
@@ -110,6 +100,7 @@ class TelegramChannel(AbstractNotificationChannel):
         depot_diff_html: str | None = None,
         patch_version: str | None = None,
         is_timeout: bool = False,
+        is_waiting_datamine: bool = False,
     ) -> None:
         """Edit an existing message, replacing placeholder with patch notes / datamining."""
         if not self.bot:
@@ -125,6 +116,7 @@ class TelegramChannel(AbstractNotificationChannel):
             depot_diff_html=depot_diff_html,
             patch_version=patch_version,
             is_timeout=is_timeout,
+            is_waiting_datamine=is_waiting_datamine,
         )
 
         try:

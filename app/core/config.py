@@ -97,7 +97,7 @@ class AppSettings(BaseSettings):
 
     # ─── AI Analysis (Gemini) ───
     gemini_api_key: SecretStr | None = None
-    gemini_model: str = "gemini-3.8-flash"
+    gemini_model: str = "gemini-3.5-flash"
  
     # ─── GitHub Datamining ───
     github_token: SecretStr | None = None

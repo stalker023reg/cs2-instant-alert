@@ -23,9 +23,15 @@ logger = get_logger("system")
 # Patterns in lower index have higher inclusion priority
 PRIORITY_PATTERNS: list[tuple[str, re.Pattern]] = [
     ("convars", re.compile(r"^DumpSource2/(convars|commands)\.txt$", re.IGNORECASE)),
+    ("items", re.compile(r".*/items/items_game.*\.txt$", re.IGNORECASE)),
     ("scripting", re.compile(r".*\.d\.ts$", re.IGNORECASE)),
     ("panorama", re.compile(r".*/panorama/(styles|layout|scripts)/.*", re.IGNORECASE)),
     ("resource", re.compile(r".*/resource/csgo_(english|russian)\.txt$", re.IGNORECASE)),
+    ("vdata", re.compile(r".*/scripts/.*\.vdata$", re.IGNORECASE)),
+    ("asset_info", re.compile(r".*readonly_tools_asset_info\.txt$", re.IGNORECASE)),
+    ("soundstacks", re.compile(r".*/soundstacks/.*\.vsndstck$", re.IGNORECASE)),
+    ("strings", re.compile(r".*_strings\.txt$", re.IGNORECASE)),
+    ("soundevents", re.compile(r".*/soundevents/.*\.vsndevts$", re.IGNORECASE)),
     ("protobufs", re.compile(r"^Protobufs/.*", re.IGNORECASE)),
     ("configs", re.compile(r"^game/csgo/cfg/.*", re.IGNORECASE)),
 ]
@@ -55,19 +61,21 @@ class GitHubDatamineFetcher:
         self,
         github_token: str | None = None,
         timeout_seconds: float = 15.0,
-        max_diff_chars: int = 35000,
+        max_diff_chars: int = 45000,
     ) -> None:
+        if github_token is not None and hasattr(github_token, "get_secret_value"):
+            github_token = github_token.get_secret_value()
         self.github_token = github_token
         self.timeout_seconds = timeout_seconds
         self.max_diff_chars = max_diff_chars
 
-    def _get_headers(self) -> dict[str, str]:
+    def _get_headers(self, anonymous: bool = False) -> dict[str, str]:
         headers = {
             "Accept": "application/vnd.github.v3+json",
             "User-Agent": "CS2-Instant-Alert-Bot/1.0",
         }
-        if self.github_token:
-            headers["Authorization"] = f"Bearer {self.github_token}"
+        if not anonymous and self.github_token and str(self.github_token).strip():
+            headers["Authorization"] = f"Bearer {str(self.github_token).strip()}"
         return headers
 
     async def fetch_matching_commit(
@@ -87,6 +95,10 @@ class GitHubDatamineFetcher:
         try:
             async with httpx.AsyncClient(timeout=self.timeout_seconds) as client:
                 resp = await client.get(list_url, headers=self._get_headers())
+
+                if resp.status_code == 401 and self.github_token:
+                    await logger.awarning("github_token_unauthorized_falling_back_anonymous")
+                    resp = await client.get(list_url, headers=self._get_headers(anonymous=True))
 
                 if resp.status_code == 403:
                     await logger.awarning("github_rate_limited", status=403)
@@ -137,6 +149,10 @@ class GitHubDatamineFetcher:
                 # Fetch full commit details including files diff
                 detail_url = f"{self.REPO_URL}/commits/{sha}"
                 detail_resp = await client.get(detail_url, headers=self._get_headers())
+
+                if detail_resp.status_code == 401 and self.github_token:
+                    await logger.awarning("github_token_unauthorized_detail_falling_back_anonymous")
+                    detail_resp = await client.get(detail_url, headers=self._get_headers(anonymous=True))
 
                 if detail_resp.status_code != 200:
                     await logger.awarning("github_commit_detail_failed", sha=sha, status=detail_resp.status_code)
@@ -205,8 +221,15 @@ class GitHubDatamineFetcher:
         current_len = 0
         has_relevant = False
 
-        for group in prioritized_files:
-            for filename, patch in group:
+        group_limits = {"soundevents": 6, "strings": 6}
+
+        for idx, group in enumerate(prioritized_files):
+            group_name = PRIORITY_PATTERNS[idx][0]
+            limit = group_limits.get(group_name, len(group))
+            files_to_process = group[:limit]
+            skipped_count = len(group) - limit
+
+            for filename, patch in files_to_process:
                 has_relevant = True
                 chunk_header = f"--- a/{filename}\n+++ b/{filename}\n"
                 chunk_budget = self.max_diff_chars - current_len - len(chunk_header)
@@ -224,6 +247,11 @@ class GitHubDatamineFetcher:
                 else:
                     diff_chunks.append(chunk_header + patch)
                     current_len += len(chunk_header) + len(patch)
+
+            if skipped_count > 0:
+                summary_line = f"# ... и ещё {skipped_count} аналогичных файлов {group_name}\n"
+                diff_chunks.append(summary_line)
+                current_len += len(summary_line)
 
         assembled_diff = "\n\n".join(diff_chunks)
 
