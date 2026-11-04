@@ -8,6 +8,7 @@ Used for boot-time self-tests and the /status command.
 
 from __future__ import annotations
 
+import asyncio
 import sys
 from datetime import UTC, datetime
 from typing import Any
@@ -113,9 +114,14 @@ class HealthService:
         return self.event_bus._task is not None and not self.event_bus._task.done()
 
     def _check_scheduler(self) -> bool:
-        return self.orchestrator._running and any(
+        is_healthy = self.orchestrator._running and any(
             not task.done() for task in self.orchestrator._tasks.values()
         )
+        if not is_healthy and self.orchestrator._running:
+            # Self-healing: if orchestrator should be running but has no live tasks,
+            # trigger task recovery immediately
+            asyncio.create_task(self.orchestrator.start())
+        return is_healthy
 
     async def _check_monitoring_freshness(self) -> bool:
         """Verify that a successful PICS result recently reached the database."""

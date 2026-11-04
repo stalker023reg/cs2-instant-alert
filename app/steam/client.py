@@ -316,7 +316,19 @@ class AsyncSteamClient:
                     result = op()
                     fut.set_result(result)
                 except BaseException as exc:
-                    fut.set_exception(exc)
+                    if isinstance(exc, (KeyboardInterrupt, SystemExit)):
+                        fut.set_exception(exc)
+                    elif isinstance(exc, Exception):
+                        fut.set_exception(exc)
+                    else:
+                        # Convert non-Exception BaseExceptions (like gevent.Timeout or GreenletExit)
+                        # into SteamConnectionError so they don't break asyncio tasks or bypass except Exception
+                        fut.set_exception(
+                            SteamConnectionError(
+                                f"Steam greenlet operation error ({type(exc).__name__}): {exc}",
+                                code="STEAM_GREENLET_ERROR",
+                            )
+                        )
 
             gevent.spawn(_execute, operation, future)
 
@@ -387,6 +399,15 @@ class AsyncSteamClient:
             raise SteamConnectionError(
                 "Timed out waiting for Steam operation",
                 code="STEAM_OPERATION_TIMEOUT",
+            ) from exc
+        except BaseException as exc:
+            if isinstance(exc, (KeyboardInterrupt, SystemExit, asyncio.CancelledError)):
+                raise
+            if isinstance(exc, Exception):
+                raise
+            raise SteamConnectionError(
+                f"Steam thread operation failed ({type(exc).__name__}): {exc}",
+                code="STEAM_THREAD_ERROR",
             ) from exc
 
     async def get_product_info(self, apps: list[int], packages: list[int] | None = None) -> dict[str, Any]:

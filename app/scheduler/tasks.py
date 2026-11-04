@@ -75,76 +75,117 @@ class MonitoringOrchestrator:
             name=f"Monitor_{game.slug}",
         )
         self._tasks[game.id] = task
+
+        def _on_done(t: asyncio.Task) -> None:
+            if not self._running:
+                return
+            exc = None
+            if not t.cancelled():
+                try:
+                    exc = t.exception()
+                except Exception:
+                    pass
+            logger.warning(
+                "monitoring_task_unexpectedly_finished",
+                game_id=str(game.id),
+                slug=game.slug,
+                cancelled=t.cancelled(),
+                error=str(exc) if exc else None,
+            )
+            # Supervisor: automatically restart monitoring after unexpected death
+            if self._running:
+                asyncio.create_task(self._respawn_game_task(game))
+
+        task.add_done_callback(_on_done)
         await logger.ainfo("monitoring_started", game_id=str(game.id), slug=game.slug)
+
+    async def _respawn_game_task(self, game: Game) -> None:
+        """Respawn monitoring loop for a game with a brief backoff."""
+        await asyncio.sleep(2.0)
+        if self._running:
+            await logger.awarning("respawning_monitoring_task", game_id=str(game.id), slug=game.slug)
+            await self.start_monitoring_game(game)
 
     async def _monitoring_loop(self, game: Game) -> None:
         """The continuous polling loop for a game."""
-        while self._running:
-            interval = self.settings.steam_check_interval_seconds
-            try:
-                # 1. Open short-lived session for this check
-                async with self.session_factory() as session:
-                    state_repo = SteamStateRepository(session)
-                    app_state = await state_repo.get_or_create(game.id)
-
-                    # Initialize controllers
-                    race_controller = RaceModeController(state_repo, self.settings)
-                    # Check if we should deactivate race mode
-                    app_state = await race_controller.check_and_deactivate(app_state)
-
-                    # Determine interval
-                    interval = race_controller.get_current_interval(app_state, game.monitor_config)
-
-                # 2. Fetch data (outside of DB transaction)
-                # Primary source is PICS. We can fetch others if race mode is active to get patch notes.
-                sources = [SteamSource.PICS]
-                if app_state.race_mode_active:
-                    sources.append(SteamSource.WEB_API)
-
-                results = await self.monitor.check_app(game.steam_app_id, sources=sources)
-
-                # 3. Process data
-                if SteamSource.PICS in results:
+        try:
+            while self._running:
+                interval = self.settings.steam_check_interval_seconds
+                try:
+                    # 1. Open short-lived session for this check
                     async with self.session_factory() as session:
                         state_repo = SteamStateRepository(session)
-                        app_state = await state_repo.get_by_game_id(game.id)
-                        if app_state is None:
-                            app_state = await state_repo.get_or_create(game.id)
+                        app_state = await state_repo.get_or_create(game.id)
 
-                        update_service = UpdateService(session, self.event_bus)
+                        # Initialize controllers
                         race_controller = RaceModeController(state_repo, self.settings)
+                        # Check if we should deactivate race mode
+                        app_state = await race_controller.check_and_deactivate(app_state)
 
-                        is_new = await update_service.process_steam_data(
-                            game.id,
-                            app_state,
-                            results[SteamSource.PICS]
+                        # Determine interval
+                        interval = race_controller.get_current_interval(app_state, game.monitor_config)
+
+                    # 2. Fetch data (outside of DB transaction)
+                    # Primary source is PICS. We can fetch others if race mode is active to get patch notes.
+                    sources = [SteamSource.PICS]
+                    if app_state.race_mode_active:
+                        sources.append(SteamSource.WEB_API)
+
+                    results = await self.monitor.check_app(game.steam_app_id, sources=sources)
+
+                    # 3. Process data
+                    if SteamSource.PICS in results:
+                        async with self.session_factory() as session:
+                            state_repo = SteamStateRepository(session)
+                            app_state = await state_repo.get_by_game_id(game.id)
+                            if app_state is None:
+                                app_state = await state_repo.get_or_create(game.id)
+
+                            update_service = UpdateService(session, self.event_bus)
+                            race_controller = RaceModeController(state_repo, self.settings)
+
+                            is_new = await update_service.process_steam_data(
+                                game.id,
+                                app_state,
+                                results[SteamSource.PICS]
+                            )
+
+                            if is_new:
+                                await race_controller.activate_race_mode(app_state)
+
+                            await session.commit()
+                    else:
+                        await logger.awarning(
+                            "monitoring_check_failed",
+                            game_id=str(game.id),
+                            source=SteamSource.PICS,
                         )
 
-                        if is_new:
-                            await race_controller.activate_race_mode(app_state)
-
-                        await session.commit()
-                else:
-                    await logger.awarning(
-                        "monitoring_check_failed",
+                    # Wait for next interval
+                    await asyncio.sleep(interval)
+                except asyncio.CancelledError:
+                    await logger.ainfo("monitoring_stopped", game_id=str(game.id))
+                    raise
+                except Exception as e:
+                    # Keep the same task alive. The previous implementation attempted
+                    # to spawn a replacement while the current task was still present
+                    # in _tasks, so a single exception stopped monitoring permanently.
+                    await logger.aerror(
+                        "monitoring_iteration_failed",
                         game_id=str(game.id),
-                        source=SteamSource.PICS,
+                        error=str(e),
+                        exc_info=True,
                     )
-
-                # Wait for next interval
-                await asyncio.sleep(interval)
-            except asyncio.CancelledError:
-                await logger.ainfo("monitoring_stopped", game_id=str(game.id))
-                raise
-            except Exception as e:
-                # Keep the same task alive. The previous implementation attempted
-                # to spawn a replacement while the current task was still present
-                # in _tasks, so a single exception stopped monitoring permanently.
-                await logger.aerror(
-                    "monitoring_iteration_failed",
-                    game_id=str(game.id),
-                    error=str(e),
-                    exc_info=True,
-                )
-                if self._running:
-                    await asyncio.sleep(min(60, max(5, interval)))
+                    if self._running:
+                        await asyncio.sleep(min(60, max(5, interval)))
+        except asyncio.CancelledError:
+            raise
+        except BaseException as fatal_err:
+            await logger.aerror(
+                "monitoring_loop_fatal_crash",
+                game_id=str(game.id),
+                error=str(fatal_err),
+                error_type=type(fatal_err).__name__,
+                exc_info=True,
+            )
+            raise
