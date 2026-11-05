@@ -155,12 +155,20 @@ class GeminiAnalysisService:
             ai_text = response.text.strip()
             summary_html = self._sanitize_telegram_html(ai_text)
 
+            usage = getattr(response, "usage_metadata", None)
+            prompt_tokens = getattr(usage, "prompt_token_count", None) if usage else None
+            candidate_tokens = getattr(usage, "candidates_token_count", None) if usage else None
+            total_tokens = getattr(usage, "total_token_count", None) if usage else None
+
             await logger.ainfo(
                 "gemini_analysis_complete",
                 model=used_model,
                 input_patch_len=len(raw_patch_notes) if raw_patch_notes else 0,
                 input_diff_len=len(git_diff) if git_diff else 0,
                 output_len=len(summary_html),
+                prompt_tokens=prompt_tokens,
+                candidate_tokens=candidate_tokens,
+                total_tokens=total_tokens,
             )
 
             return UpdateAnalysis(
