@@ -23,6 +23,8 @@ logger = get_logger("system")
 # Patterns in lower index have higher inclusion priority
 PRIORITY_PATTERNS: list[tuple[str, re.Pattern]] = [
     ("convars", re.compile(r"^DumpSource2/(convars|commands)\.txt$", re.IGNORECASE)),
+    ("configs", re.compile(r".*/cfg/.*\.cfg$", re.IGNORECASE)),
+    ("scripts", re.compile(r".*/scripts/.*(whitelist|cvar|items|weapon|script).*\.txt$", re.IGNORECASE)),
     ("items", re.compile(r".*/items/items_game.*\.txt$", re.IGNORECASE)),
     ("scripting", re.compile(r".*\.d\.ts$", re.IGNORECASE)),
     ("panorama", re.compile(r".*/panorama/(styles|layout|scripts)/.*", re.IGNORECASE)),
@@ -33,7 +35,6 @@ PRIORITY_PATTERNS: list[tuple[str, re.Pattern]] = [
     ("strings", re.compile(r".*_strings\.txt$", re.IGNORECASE)),
     ("soundevents", re.compile(r".*/soundevents/.*\.vsndevts$", re.IGNORECASE)),
     ("protobufs", re.compile(r"^Protobufs/.*", re.IGNORECASE)),
-    ("configs", re.compile(r"^game/csgo/cfg/.*", re.IGNORECASE)),
 ]
 
 

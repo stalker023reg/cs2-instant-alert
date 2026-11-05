@@ -83,7 +83,7 @@ class TestTelegramFormatter(unittest.TestCase):
 
         self.assertIn("Обновление CS2", msg)
         self.assertNotIn("Изменённые компоненты", msg)
-        self.assertIn("Вышло обновление! Ожидаем публикацию списка изменений от Valve...", msg)
+        self.assertIn("Патч уже загружается в Steam. Ожидаем официальный список изменений от Valve...", msg)
 
     def test_stage_2_official_notes_waiting_datamine(self):
         msg = TelegramFormatter.format_update_alert(
@@ -93,9 +93,9 @@ class TestTelegramFormatter(unittest.TestCase):
             is_waiting_datamine=True,
         )
 
-        self.assertIn("Официальный патчноут Valve", msg)
+        self.assertIn("Официальные изменения от Valve", msg)
         self.assertIn("Исправлен баг со звуком", msg)
-        self.assertIn("Файлы обновления уже распаковываются датамайнерами", msg)
+        self.assertIn("Датамайнеры распаковывают файлы обновления, ищем скрытые изменения...", msg)
 
     def test_stage_3_final_ai_alert(self):
         analysis_html = (

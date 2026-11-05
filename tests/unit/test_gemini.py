@@ -266,7 +266,7 @@ class TestFormatterAIAlert:
         )
 
         assert "Важный патч" in message
-        assert "📋 <b>Официальный патчноут Valve</b>" not in message
+        assert "📜 <b>Официальные изменения от Valve:</b>" not in message
         assert "📦 <b>Изменённые компоненты</b>" not in message
         assert "https://store.steampowered.com/news/123" in message
 
@@ -294,7 +294,7 @@ class TestFormatterAIAlert:
             depot_diff_html=None,
         )
 
-        assert "📋 <b>Официальный патчноут Valve</b>" in message
+        assert "📜 <b>Официальные изменения от Valve:</b>" in message
         assert "Some raw patch notes" in message
         assert "📦 <b>Изменённые компоненты</b>" not in message
 
@@ -349,4 +349,4 @@ class TestFormatterAIAlert:
         )
 
         assert "📦 <b>Изменённые компоненты</b>" not in message
-        assert "Вышло обновление! Ожидаем публикацию списка изменений от Valve..." in message
+        assert "Патч уже загружается в Steam. Ожидаем официальный список изменений от Valve..." in message

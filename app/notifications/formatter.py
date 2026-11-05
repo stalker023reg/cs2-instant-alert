@@ -37,9 +37,9 @@ class TelegramFormatter:
         """
         date_str = format_date(event.detected_at, timezone)
         if patch_version:
-            title = f"🔄 <b>Обновление CS2 {code_html(patch_version)} · {date_str}</b>"
+            title = f"⚡ <b>Обновление CS2 • {code_html(patch_version)}</b>\n📅 <i>{date_str}</i>"
         else:
-            title = f"🔄 <b>Обновление CS2 · {date_str}</b>"
+            title = f"⚡ <b>Обновление CS2</b>\n📅 <i>{date_str}</i>"
 
         lines = [title]
 
@@ -50,29 +50,29 @@ class TelegramFormatter:
                 lines.append(patch_notes_html)
             elif is_waiting_datamine:
                 # Stage 2: Official patch notes displayed, still waiting for GitHub datamining
-                lines.append("📋 <b>Официальный патчноут Valve</b>")
+                lines.append("📜 <b>Официальные изменения от Valve:</b>")
                 lines.append("")
                 lines.append(patch_notes_html)
                 lines.append("")
-                lines.append("🕵️ <i>Файлы обновления уже распаковываются датамайнерами, ищем скрытые изменения...</i>")
+                lines.append("🔎 <i>Датамайнеры распаковывают файлы обновления, ищем скрытые изменения...</i>")
             else:
                 # Official patch notes displayed (after datamining timeout or finished)
-                lines.append("📋 <b>Официальный патчноут Valve</b>")
+                lines.append("📜 <b>Официальные изменения от Valve:</b>")
                 lines.append("")
                 lines.append(patch_notes_html)
 
             if patch_url:
                 lines.append("")
                 if "github.com" in patch_url:
-                    lines.append(f'🔗 <a href="{patch_url}">Изменения файлов на GitHub</a>')
+                    lines.append(f'🌐 <a href="{patch_url}">Изменения файлов на GitHub</a>')
                 else:
-                    lines.append(f'🔗 <a href="{patch_url}">Официальный пост в Steam</a>')
+                    lines.append(f'🌐 <a href="{patch_url}">Официальный пост в Steam</a>')
         elif is_timeout:
             lines.append("")
-            lines.append("ℹ️ <i>Техническое обновление исполняемых файлов без изменений в геймплее, настройках и интерфейсе.</i>")
+            lines.append("⚙️ <i>Техническое обновление исполняемых файлов без изменений в геймплее, настройках и интерфейсе.</i>")
         else:
             # Stage 1: Initial instant alert
             lines.append("")
-            lines.append("⏳ <i>Вышло обновление! Ожидаем публикацию списка изменений от Valve...</i>")
+            lines.append("⏳ <i>Патч уже загружается в Steam. Ожидаем официальный список изменений от Valve...</i>")
 
         return "\n".join(lines)

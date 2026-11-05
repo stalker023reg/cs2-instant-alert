@@ -75,6 +75,10 @@ class TranslationService:
                 flags=re.DOTALL,
             )
             
+            # Preserve CS2 game mode names without awkward Russian translations
+            translated = re.sub(r'\b[Рр]етейк(?:ах|ами|ам|ов|а|у|е|и)?\b', 'Retakes', translated)
+            translated = re.sub(r'\bмастерск(?:ая|ой|ую|ою)\s+карт\b', 'Мастерская', translated, flags=re.IGNORECASE)
+
             await logger.ainfo(
                 "patch_notes_translated",
                 original_len=len(text),
