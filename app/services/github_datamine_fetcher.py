@@ -23,17 +23,19 @@ logger = get_logger("system")
 # Patterns in lower index have higher inclusion priority
 PRIORITY_PATTERNS: list[tuple[str, re.Pattern]] = [
     ("convars", re.compile(r"^DumpSource2/(convars|commands)\.txt$", re.IGNORECASE)),
-    ("configs", re.compile(r".*/cfg/.*\.cfg$", re.IGNORECASE)),
-    ("scripts", re.compile(r".*/scripts/.*(whitelist|cvar|items|weapon|script).*\.txt$", re.IGNORECASE)),
-    ("items", re.compile(r".*/items/items_game.*\.txt$", re.IGNORECASE)),
+    ("configs", re.compile(r".*(cfg/.*(\.cfg|\.txt)|gameinfo\.gi)$", re.IGNORECASE)),
+    ("scripts", re.compile(r".*scripts/.*\.(txt|kv3)$", re.IGNORECASE)),
+    ("items", re.compile(r".*items/items_game.*\.txt$", re.IGNORECASE)),
     ("scripting", re.compile(r".*\.d\.ts$", re.IGNORECASE)),
-    ("panorama", re.compile(r".*/panorama/(styles|layout|scripts)/.*", re.IGNORECASE)),
-    ("resource", re.compile(r".*/resource/csgo_(english|russian)\.txt$", re.IGNORECASE)),
-    ("vdata", re.compile(r".*/scripts/.*\.vdata$", re.IGNORECASE)),
+    ("panorama", re.compile(r".*panorama/(styles|layout|scripts)/.*", re.IGNORECASE)),
+    ("resource", re.compile(r".*resource/csgo_(english|russian)\.txt$", re.IGNORECASE)),
+    ("fgd", re.compile(r".*\.fgd$", re.IGNORECASE)),
+    ("schemas", re.compile(r"^DumpSource2/schemas/.*\.h$", re.IGNORECASE)),
+    ("vdata", re.compile(r".*scripts/.*\.vdata$", re.IGNORECASE)),
     ("asset_info", re.compile(r".*readonly_tools_asset_info\.txt$", re.IGNORECASE)),
-    ("soundstacks", re.compile(r".*/soundstacks/.*\.vsndstck$", re.IGNORECASE)),
+    ("soundstacks", re.compile(r".*soundstacks/.*\.vsndstck$", re.IGNORECASE)),
     ("strings", re.compile(r".*_strings\.txt$", re.IGNORECASE)),
-    ("soundevents", re.compile(r".*/soundevents/.*\.vsndevts$", re.IGNORECASE)),
+    ("soundevents", re.compile(r".*soundevents/.*\.vsndevts$", re.IGNORECASE)),
     ("protobufs", re.compile(r"^Protobufs/.*", re.IGNORECASE)),
 ]
 
@@ -162,6 +164,18 @@ class GitHubDatamineFetcher:
                 detail_data = detail_resp.json()
                 files = detail_data.get("files", [])
 
+                # If steam.inf has no inline patch (common in large commits), fetch raw content directly
+                for f in files:
+                    if f.get("filename", "").endswith("steam.inf") and not f.get("patch"):
+                        raw_url = f.get("raw_url") or f"https://raw.githubusercontent.com/SteamTracking/GameTracking-CS2/{sha}/game/csgo/steam.inf"
+                        try:
+                            raw_resp = await client.get(raw_url, headers=self._get_headers(), follow_redirects=True)
+                            if raw_resp.status_code == 200:
+                                f["patch"] = raw_resp.text
+                        except Exception as e:
+                            await logger.awarning("steam_inf_raw_fetch_failed", error=str(e))
+                        break
+
                 return self._parse_commit_data(sha, commit_html_url, commit_dt, files)
 
         except httpx.TimeoutException:
@@ -170,6 +184,92 @@ class GitHubDatamineFetcher:
             await logger.aerror("github_datamine_error", error=str(e), exc_info=True)
 
         return None
+
+    @staticmethod
+    def _summarize_pak01_patch(patch: str) -> str:
+        """
+        Produce a compact, high-signal summary of asset changes in pak01_dir.vpk.
+        Groups added/modified assets by category (animations, models, sounds, textures, scripts, maps)
+        and lists sample weapon/feature names so Gemini sees the exact scope without token bloat.
+        """
+        from collections import Counter
+
+        lines = patch.splitlines()
+        added = [l[1:].strip() for l in lines if l.startswith("+") and not l.startswith("+++")]
+        removed = [l[1:].strip() for l in lines if l.startswith("-") and not l.startswith("---")]
+
+        if not added and not removed:
+            return ""
+
+        ext_counts: Counter[str] = Counter()
+        anim_weapons: set[str] = set()
+        map_names: set[str] = set()
+        notable_items: list[str] = []
+
+        for line in added:
+            path = line.split()[0] if line else ""
+            if not path:
+                continue
+            ext = path.split(".")[-1].lower() if "." in path else ""
+            ext_counts[ext] += 1
+
+            # Collect animation weapon details
+            if "animation" in path:
+                parts = path.split("/")
+                for p in parts:
+                    if any(p.startswith(prefix) for prefix in ["pistol_", "weapon_", "rifle_", "smg_", "knife_"]):
+                        w_name = re.sub(r"^(pistol_|weapon_|rifle_|smg_)", "", p)
+                        anim_weapons.add(w_name)
+
+            # Collect map details
+            if "maps/" in path:
+                parts = path.split("/")
+                if len(parts) > 1 and parts[1].startswith("de_"):
+                    map_names.add(parts[1].split(".")[0])
+
+            # Collect notable texture/c4/item names
+            if any(keyword in path.lower() for keyword in ["c4", "bomb", "freeze", "chicken", "taser", "zeus", "retake", "defuse"]):
+                filename_only = path.split("/")[-1]
+                if filename_only not in notable_items and len(notable_items) < 8:
+                    notable_items.append(filename_only)
+
+        summary_lines = [
+            "--- a/game/csgo/pak01_dir.txt (Сводка изменений в архиве игры pak01.vpk)",
+            "+++ b/game/csgo/pak01_dir.txt",
+            f"# Всего добавлено/обновлено файлов: {len(added)}, удалено/заменено: {len(removed)}",
+        ]
+
+        # Animations
+        anim_count = ext_counts.get("vnmclip_c", 0) + ext_counts.get("vanim_c", 0)
+        graph_count = ext_counts.get("vnmgraph_c", 0)
+        if anim_count > 0 or graph_count > 0:
+            anim_desc = f"# • Анимации: обновлено {anim_count} клипов анимаций"
+            if graph_count > 0:
+                anim_desc += f" и {graph_count} граф анимаций"
+            if anim_weapons:
+                anim_desc += f" (оружие: {', '.join(sorted(list(anim_weapons))[:8])})"
+            summary_lines.append(anim_desc)
+
+        # Models & Textures
+        model_count = ext_counts.get("vmdl_c", 0)
+        tex_count = ext_counts.get("vtex_c", 0) + ext_counts.get("vmat_c", 0) + ext_counts.get("vcompmat_c", 0)
+        if model_count > 0 or tex_count > 0:
+            summary_lines.append(f"# • Модели и текстуры: {model_count} моделей, {tex_count} текстур/материалов")
+
+        # Scripts / Logic
+        script_count = ext_counts.get("kv3", 0) + ext_counts.get("txt", 0) + ext_counts.get("vdata", 0)
+        if script_count > 0:
+            summary_lines.append(f"# • Игровые скрипты и конфиги: {script_count} файлов в архиве")
+
+        # Maps
+        if map_names:
+            summary_lines.append(f"# • Карты: {', '.join(sorted(map_names))}")
+
+        # Notable items
+        if notable_items:
+            summary_lines.append(f"# • Ключевые обновлённые ассеты: {', '.join(notable_items)}")
+
+        return "\n".join(summary_lines) + "\n"
 
     def _parse_commit_data(
         self,
@@ -187,16 +287,16 @@ class GitHubDatamineFetcher:
         for f in files:
             filename = f.get("filename", "")
             if filename.endswith("steam.inf"):
-                patch_content = f.get("patch", "")
-                patch_ver_match = re.search(r"^\+PatchVersion=([0-9.]+)", patch_content, re.MULTILINE)
+                patch_content = f.get("patch") or ""
+                patch_ver_match = re.search(r"^\+?PatchVersion=([0-9.]+)", patch_content, re.MULTILINE)
                 if patch_ver_match:
                     patch_version = patch_ver_match.group(1).strip()
 
-                client_ver_match = re.search(r"^\+ClientVersion=([0-9.]+)", patch_content, re.MULTILINE)
+                client_ver_match = re.search(r"^\+?ClientVersion=([0-9.]+)", patch_content, re.MULTILINE)
                 if client_ver_match:
                     client_version = client_ver_match.group(1).strip()
 
-                server_ver_match = re.search(r"^\+ServerVersion=([0-9.]+)", patch_content, re.MULTILINE)
+                server_ver_match = re.search(r"^\+?ServerVersion=([0-9.]+)", patch_content, re.MULTILINE)
                 if server_ver_match:
                     server_version = server_ver_match.group(1).strip()
                 break
@@ -205,10 +305,20 @@ class GitHubDatamineFetcher:
         prioritized_files: list[list[tuple[str, str]]] = [[] for _ in PRIORITY_PATTERNS]
         matched_filenames: list[str] = []
 
+        # Summarize pak01_dir.txt if present
+        pak01_summary = ""
+        for f in files:
+            if f.get("filename", "").endswith("pak01_dir.txt"):
+                patch = f.get("patch") or ""
+                if patch:
+                    pak01_summary = self._summarize_pak01_patch(patch)
+                    matched_filenames.append("game/csgo/pak01_dir.txt (summary)")
+                break
+
         for f in files:
             filename = f.get("filename", "")
             patch = f.get("patch", "")
-            if not patch:
+            if not patch or filename.endswith("pak01_dir.txt"):
                 continue
 
             for idx, (_, pattern) in enumerate(PRIORITY_PATTERNS):
@@ -222,7 +332,18 @@ class GitHubDatamineFetcher:
         current_len = 0
         has_relevant = False
 
-        group_limits = {"soundevents": 6, "strings": 6}
+        if pak01_summary:
+            diff_chunks.append(pak01_summary)
+            current_len += len(pak01_summary)
+            has_relevant = True
+
+        group_limits = {
+            "soundevents": 6,
+            "strings": 6,
+            "schemas": 4,
+            "fgd": 2,
+            "configs": 6,
+        }
 
         for idx, group in enumerate(prioritized_files):
             group_name = PRIORITY_PATTERNS[idx][0]
