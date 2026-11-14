@@ -210,10 +210,11 @@ class PatchNotesService:
         raw_patch_notes = news_item.contents if news_item else ""
         patch_url = news_item.url if news_item else None
 
-        formatted_html = format_steam_patchnotes_html(raw_patch_notes)
+        formatted_html_en = format_steam_patchnotes_html(raw_patch_notes)
+        formatted_html_ru = formatted_html_en
         if self.translation and self.translation.is_available:
             try:
-                formatted_html = await self.translation.translate_to_russian(formatted_html)
+                formatted_html_ru = await self.translation.translate_to_russian(formatted_html_en)
             except Exception as e:
                 await logger.awarning("official_patchnotes_translation_failed", error=str(e))
 
@@ -235,7 +236,8 @@ class PatchNotesService:
         # Edit delivered messages with is_waiting_datamine=True
         await self._edit_messages(
             event=event,
-            patch_notes_html=formatted_html,
+            patch_notes_html=formatted_html_ru,
+            patch_notes_html_en=formatted_html_en,
             patch_url=patch_url,
             is_waiting_datamine=True,
             edit_reason="PATCH_NOTES_ADDED",
@@ -257,37 +259,59 @@ class PatchNotesService:
         manifest_changes = await self._get_manifest_changes(event.update_id)
 
         ai_analyzed = False
-        formatted_html: str | None = None
+        formatted_html_ru: str | None = None
+        formatted_html_en: str | None = None
 
         # ─── 1. Run Gemini Anti-Hallucination Analysis ───
         if self.gemini and self.gemini.is_available:
             try:
-                analysis = await self.gemini.analyze_update(
+                analysis_ru = await self.gemini.analyze_update(
                     raw_patch_notes=raw_patch_notes,
                     git_diff=git_diff,
                     patch_version=patch_version,
                     manifest_changes=manifest_changes,
+                    language="ru",
                 )
-                formatted_html = analysis.summary_html
-                ai_analyzed = True
+                formatted_html_ru = analysis_ru.summary_html
+                if not analysis_ru.error:
+                    ai_analyzed = True
 
-                if analysis.error:
-                    ai_analyzed = False
+                # Generate English version for English channels/groups
+                try:
+                    analysis_en = await self.gemini.analyze_update(
+                        raw_patch_notes=raw_patch_notes,
+                        git_diff=git_diff,
+                        patch_version=patch_version,
+                        manifest_changes=manifest_changes,
+                        language="en",
+                    )
+                    formatted_html_en = analysis_en.summary_html
+                except Exception as en_err:
+                    await logger.awarning("gemini_english_analysis_failed", error=str(en_err))
+                    formatted_html_en = None
 
             except Exception as e:
                 await logger.awarning("gemini_datamine_analysis_failed", error=str(e))
                 ai_analyzed = False
 
         # ─── 2. Fallbacks if Gemini unavailable ───
-        if not formatted_html:
+        if not formatted_html_ru:
             if raw_patch_notes:
-                formatted_html = format_steam_patchnotes_html(raw_patch_notes)
+                formatted_raw = format_steam_patchnotes_html(raw_patch_notes)
+                formatted_html_en = formatted_raw
                 if self.translation and self.translation.is_available:
-                    formatted_html = await self.translation.translate_to_russian(formatted_html)
+                    try:
+                        formatted_html_ru = await self.translation.translate_to_russian(formatted_raw)
+                    except Exception:
+                        formatted_html_ru = formatted_raw
+                else:
+                    formatted_html_ru = formatted_raw
             elif git_diff:
-                formatted_html = "<i>Файлы обновления получены из GameTracking-CS2, но AI-анализ временно недоступен.</i>"
+                formatted_html_ru = "<i>Файлы обновления получены из GameTracking-CS2, но AI-анализ временно недоступен.</i>"
+                formatted_html_en = "<i>GameTracking-CS2 files updated, but AI analysis is temporarily unavailable.</i>"
             else:
-                formatted_html = "<i>Техническое обновление исполняемых файлов без изменений в геймплее, настройках и интерфейсе.</i>"
+                formatted_html_ru = "<i>Техническое обновление исполняемых файлов без изменений в геймплее, настройках и интерфейсе.</i>"
+                formatted_html_en = "<i>Technical binary update without gameplay, settings or UI changes.</i>"
 
         # ─── 3. Update Database ───
         try:
@@ -339,16 +363,18 @@ class PatchNotesService:
         """Handle 20-minute timeout when no datamining commit appeared."""
         if news_item and news_item.contents:
             raw_patch_notes = news_item.contents
-            formatted_html = format_steam_patchnotes_html(raw_patch_notes)
+            formatted_html_en = format_steam_patchnotes_html(raw_patch_notes)
+            formatted_html_ru = formatted_html_en
             if self.translation and self.translation.is_available:
                 try:
-                    formatted_html = await self.translation.translate_to_russian(formatted_html)
+                    formatted_html_ru = await self.translation.translate_to_russian(formatted_html_en)
                 except Exception:
                     pass
 
             await self._edit_messages(
                 event=event,
-                patch_notes_html=formatted_html,
+                patch_notes_html=formatted_html_ru,
+                patch_notes_html_en=formatted_html_en,
                 patch_url=news_item.url,
                 ai_analyzed=False,
                 is_timeout=True,
@@ -359,6 +385,7 @@ class PatchNotesService:
             await self._edit_messages(
                 event=event,
                 patch_notes_html=None,
+                patch_notes_html_en=None,
                 patch_url=None,
                 patch_version=None,
                 ai_analyzed=False,
@@ -397,6 +424,7 @@ class PatchNotesService:
         depot_diff_html: str | None = None,
         is_waiting_datamine: bool = False,
         edit_reason: str = "DATAMINE_ANALYZED",
+        patch_notes_html_en: str | None = None,
     ) -> None:
         """Find delivered Telegram messages for this update and edit them in-place."""
         from sqlalchemy import select
@@ -416,11 +444,15 @@ class PatchNotesService:
             for history in histories:
                 user = await user_repo.get_by_id(history.user_id)
                 if user and history.provider_message_id:
+                    user_is_en = (user.language or "").lower().startswith("en")
+                    user_patch_notes = (
+                        patch_notes_html_en if (user_is_en and patch_notes_html_en) else patch_notes_html
+                    )
                     await self.telegram.edit_update_alert(
                         user=user,
                         message_id=history.provider_message_id,
                         event=event,
-                        patch_notes_html=patch_notes_html,
+                        patch_notes_html=user_patch_notes,
                         patch_url=patch_url,
                         ai_analyzed=ai_analyzed,
                         depot_diff_html=depot_diff_html,

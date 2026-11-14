@@ -71,14 +71,6 @@ async def handle_test(update: Update, context: CallbackContext) -> None:
         )
         
         banner_url = getattr(container.config, "banner_image_url", "https://cs2-instant-alert.fly.dev/static/banner.jpg")
-        text = TelegramFormatter.format_update_alert(
-            event=event,
-            timezone="UTC",
-            language="ru",
-            banner_url=banner_url,
-        )
-        
-        text += "\n\n<i>Это ГЛОБАЛЬНОЕ тестовое уведомление.</i>"
 
         from telegram import LinkPreviewOptions
         link_preview = (
@@ -88,10 +80,20 @@ async def handle_test(update: Update, context: CallbackContext) -> None:
         )
 
         for u in all_active_users:
+            u_lang = u.language or "ru"
+            u_is_en = u_lang.lower().startswith("en")
+            user_text = TelegramFormatter.format_update_alert(
+                event=event,
+                timezone=u.timezone or "UTC",
+                language=u_lang,
+                banner_url=banner_url,
+            )
+            user_text += "\n\n<i>This is a GLOBAL test notification.</i>" if u_is_en else "\n\n<i>Это ГЛОБАЛЬНОЕ тестовое уведомление.</i>"
+
             try:
                 await context.bot.send_message(
                     chat_id=u.telegram_id,
-                    text=text,
+                    text=user_text,
                     parse_mode="HTML",
                     link_preview_options=link_preview,
                 )

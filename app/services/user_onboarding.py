@@ -54,6 +54,8 @@ async def ensure_user_notification_defaults(
         channel.priority = 0
 
     user.is_active = True
+    if user.telegram_id == -1003957503737 or user.username == "cs2_alarm":
+        user.language = "en"
     if user.telegram_id in settings.telegram_admin_ids:
         user.is_admin = True
     return True

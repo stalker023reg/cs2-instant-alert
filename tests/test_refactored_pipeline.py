@@ -129,6 +129,39 @@ class TestTelegramFormatter(unittest.TestCase):
         self.assertIn("Техническое обновление исполняемых файлов", msg)
         self.assertNotIn("Анализируем файлы обновления", msg)
 
+    def test_english_formatting_stages(self):
+        msg_stage1 = TelegramFormatter.format_update_alert(
+            event=self.event,
+            timezone="UTC",
+            language="en",
+        )
+        self.assertIn("CS2 Update", msg_stage1)
+        self.assertIn("Patch is downloading on Steam", msg_stage1)
+
+        msg_stage2 = TelegramFormatter.format_update_alert(
+            event=self.event,
+            timezone="UTC",
+            language="en",
+            patch_notes_html="• Animation fixes",
+            is_waiting_datamine=True,
+            patch_url="https://store.steampowered.com/news/123",
+        )
+        self.assertIn("Valve Official Patch Notes:", msg_stage2)
+        self.assertIn("Dataminers are unpacking update files", msg_stage2)
+        self.assertIn("Official Steam Announcement", msg_stage2)
+
+        msg_stage3 = TelegramFormatter.format_update_alert(
+            event=self.event,
+            timezone="UTC",
+            language="en",
+            patch_version="1.41.9.7",
+            patch_notes_html="🎯 <b>Key Highlights:</b>\n• Animation fixes",
+            ai_analyzed=True,
+            patch_url="https://github.com/diff",
+        )
+        self.assertIn("CS2 Update • <code>1.41.9.7</code>", msg_stage3)
+        self.assertIn("View file changes on GitHub", msg_stage3)
+
 
 class TestGitHubDatamineParsing(unittest.TestCase):
     def test_parse_commit_data(self):

@@ -72,11 +72,13 @@ class GeminiAnalysisService:
         manifest_changes: dict[str, Any] | None = None,
         git_diff: str | None = None,
         patch_version: str | None = None,
+        language: str = "ru",
     ) -> UpdateAnalysis:
         """
         Analyze official patch notes and actual Git Diff from GameTracking-CS2.
 
         Strictly forbids guessing/hallucinations and produces factual Telegram HTML.
+        Supports Russian ('ru') and English ('en').
         """
         depot_diff_html = self._format_depot_diff_html(manifest_changes) if manifest_changes else None
 
@@ -84,16 +86,22 @@ class GeminiAnalysisService:
         has_git_diff = bool(git_diff and git_diff.strip())
         has_depots = bool(manifest_changes)
 
+        is_en = (language or "").lower().startswith("en")
+
         # If neither patch notes nor git diff nor depots are available
         if not has_patch_notes and not has_git_diff and not has_depots:
-            summary = "<i>Техническое обновление исполняемых файлов без изменений в геймплее, настройках и интерфейсе.</i>"
+            summary = (
+                "<i>Technical binary update without gameplay, settings or UI changes.</i>"
+                if is_en
+                else "<i>Техническое обновление исполняемых файлов без изменений в геймплее, настройках и интерфейсе.</i>"
+            )
             return UpdateAnalysis(
                 summary_html=summary,
                 depot_diff_html=depot_diff_html,
             )
 
         if not self._client:
-            return self._fallback_analysis(raw_patch_notes, depot_diff_html)
+            return self._fallback_analysis(raw_patch_notes, depot_diff_html, git_diff, language=language)
 
         try:
             depot_context = self._build_depot_context(manifest_changes)
@@ -102,6 +110,7 @@ class GeminiAnalysisService:
                 depot_context=depot_context,
                 git_diff=git_diff,
                 patch_version=patch_version,
+                language=language,
             )
 
             # Call Gemini Flash with fallback across stable active models
@@ -191,8 +200,108 @@ class GeminiAnalysisService:
         depot_context: str | None = None,
         git_diff: str | None = None,
         patch_version: str | None = None,
+        language: str = "ru",
     ) -> str:
         """Construct the prompt using strict anti-hallucination rules."""
+        is_en = (language or "").lower().startswith("en")
+
+        if is_en:
+            version_header = f"Update version (steam.inf): {patch_version}\n" if patch_version else ""
+            patch_notes_section = (
+                f"### 1. Official Valve Patch Notes:\n{raw_patch_notes}\n"
+                if (raw_patch_notes and raw_patch_notes.strip())
+                else "### 1. Official Valve Patch Notes:\n(No official patch notes available — technical/silent update)\n"
+            )
+            diff_section = (
+                f"### 2. Actual Git Diff from GameTracking-CS2:\n{git_diff}\n"
+                if (git_diff and git_diff.strip())
+                else "### 2. Actual Git Diff from GameTracking-CS2:\n(No public file changes detected)\n"
+            )
+            depot_section = f"\n{depot_context}\n" if depot_context else ""
+            undocumented_instructions = ""
+            if depot_context and not git_diff:
+                undocumented_instructions = """
+🔍 Undocumented Changes (Depot Changes):
+If game depots contain modified files not mentioned in official notes, highlight the affected components.
+"""
+            return f"""You are a top-tier Counter-Strike 2 technical analyst and dataminer for an English-language community channel. You write stylish, clear, engaging, and concise patch breakdowns for ordinary players while preserving all juicy details from the datamine.
+{version_header}
+Input data:
+1. Official Valve patch notes (may be absent for technical/silent patches).
+2. Real Git Diff of modified game files from the GameTracking-CS2 repository.
+
+YOUR GOAL:
+Produce an ideal patch breakdown for players. The text must read smoothly and engagingly in natural gaming English, without unnecessary technical clutter, while highlighting all critical, interesting, and juicy facts.
+
+CORE RULES:
+1. GAME MODES & TERMINOLOGY:
+   - Use standard CS2 community terms: Retakes, Workshop, Premier, Deathmatch, Arms Race, Wingman.
+
+2. CONFIGS & CONVARS (NO TECHNICAL CLUTTER):
+   - FORBIDDEN to overload readers with config file paths (e.g. gamemode_retakecasual.cfg) or raw console variable names (e.g. mp_freezetime, mp_round_restart_delay, mp_death_drop_taser).
+   - Explain the essence and exact numbers in plain English!
+     Example: "In Retakes, reduced round freeze time (from 7 to 5s) and post-round delay (from 5 to 3s)."
+     Example: "Workshop maps can now configure whether players drop the Zeus x27 upon death."
+
+3. BULLET FORMATTING:
+   - Format each point with a bullet and bold descriptive title:
+     • <b>Summary title:</b> detailed explanation in natural English.
+
+4. DATAMINED FINDINGS ("Game File Discoveries"):
+   - Put all hidden changes in game resources that aren't mentioned in Valve's official text:
+     * Archive animations & assets (if pak01 summary or diff updates 3rd-person draw/reload animations — specify the count of animations, graphs, and affected weapons, e.g. 151 animations).
+     * Bot behavior & tactics (if scripts/ai/ or .kv3 files update bot logic for Retakes — describe the new tactics: CT defuse/push, T hide around bomb).
+     * Engine configs & netcode (e.g. in gameinfo.gi — explain: server spam protection, parallel interpolation).
+     * Graphics & physics (e.g. Parallax Occlusion Mapping, frost/weapon heat mechanics).
+     * Missing icons or textures.
+     * FACTUAL ACCURACY & TIMELINE: Describe only what genuinely changed in the files. NEVER invent future tournament dates or guess unannounced events if the date has passed.
+
+5. WORKSHOP & SCRIPTING:
+   - If changes exist for map makers (Map Scripting / Entities / Precache / VScript), put them into «🛠 <b>Workshop & Scripting:</b>». If none, omit this section completely.
+
+6. IN DEVELOPMENT:
+   - Create «🔮 <b>In Development:</b>» EXCLUSIVELY if genuine prototypes or leaks of unreleased content are found (new weapons like LAR, knives, new maps, unannounced game modes).
+   - STRICTLY FORBIDDEN to write about build timestamps, compilation dates, or compiler strings in *_strings.txt.
+   - If there are no leaks of unreleased content, DO NOT CREATE this section.
+
+7. FORMATTING FOR TELEGRAM:
+   - FORBIDDEN to add an overall update title (e.g. "CS2 Update: ...") or welcome intro. Start directly with the first section!
+   - Use ONLY allowed HTML tags: <b>bold</b>, <i>italic</i>, <code>code</code>. No markdown!
+
+RESPONSE STRUCTURE:
+
+If official patch notes EXIST:
+🎯 <b>Key Highlights:</b>
+• <b>...:</b> ...
+
+🔎 <b>Game File Discoveries:</b>
+• <b>...:</b> ...
+
+🛠 <b>Workshop & Scripting:</b> (only if API / map scripting changes exist)
+• <b>...:</b> ...
+
+🔮 <b>In Development:</b> (only if leaks of unreleased weapons/knives/maps exist)
+• <b>...:</b> ...
+
+If NO official patch notes:
+First line:
+<i>No official patch notes yet</i>
+
+🔎 <b>Game File Discoveries:</b>
+• <b>...:</b> ...
+
+🔮 <b>In Development:</b> (if leaks exist)
+• <b>...:</b> ...
+
+If only binary recompile without gameplay/settings/UI changes:
+<i>Technical binary update without gameplay, settings or UI changes.</i>
+{undocumented_instructions}
+INPUT DATA:
+{patch_notes_section}
+{diff_section}
+{depot_section}
+"""
+
         version_header = f"Версия обновления (steam.inf): {patch_version}\n" if patch_version else ""
 
         patch_notes_section = (
@@ -359,9 +468,9 @@ class GeminiAnalysisService:
         text = re.sub(r"\n{3,}", "\n\n", text)
         text = text.strip()
 
-        # Strip redundant AI title/intro headers if present (e.g. "Обновление CS2: 1.41.9.6")
+        # Strip redundant AI title/intro headers if present (e.g. "Обновление CS2: 1.41.9.6" or "CS2 Update: ...")
         text = re.sub(
-            r"^(?:(?:⚡|🔄)?\s*Обновление\s+CS2[^\n]*\n+|Вышло\s+[^\n]*обновление[^\n]*\n+)+",
+            r"^(?:(?:⚡|🔄)?\s*(?:Обновление\s+CS2|CS2\s+Update)[^\n]*\n+|(?:Вышло\s+[^\n]*обновление|A\s+new\s+CS2\s+update\s+is\s+live)[^\n]*\n+)+",
             "",
             text,
             flags=re.IGNORECASE,
@@ -384,13 +493,23 @@ class GeminiAnalysisService:
         raw_patch_notes: str | None,
         depot_diff_html: str | None = None,
         git_diff: str | None = None,
+        language: str = "ru",
     ) -> UpdateAnalysis:
         """Fallback when Gemini API fails."""
+        is_en = (language or "").lower().startswith("en")
         if not raw_patch_notes:
             if git_diff and git_diff.strip():
-                summary = "<i>Официальный патчноут от Valve отсутствует. Зафиксированы изменения файлов в GameTracking-CS2, но автоматический AI-анализ временно недоступен.</i>"
+                summary = (
+                    "<i>No official Valve patch notes. File changes detected in GameTracking-CS2, but automated AI analysis is temporarily unavailable.</i>"
+                    if is_en
+                    else "<i>Официальный патчноут от Valve отсутствует. Зафиксированы изменения файлов в GameTracking-CS2, но автоматический AI-анализ временно недоступен.</i>"
+                )
             else:
-                summary = "<i>Официальные patch notes не опубликованы (бесшумный патч / технический хотфикс).</i>"
+                summary = (
+                    "<i>No official patch notes published (silent patch / technical hotfix).</i>"
+                    if is_en
+                    else "<i>Официальные patch notes не опубликованы (бесшумный патч / технический хотфикс).</i>"
+                )
             return UpdateAnalysis(
                 summary_html=summary,
                 depot_diff_html=depot_diff_html,

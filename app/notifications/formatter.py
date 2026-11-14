@@ -38,10 +38,20 @@ class TelegramFormatter:
         """
         date_str = format_date(event.detected_at, timezone)
         banner_tag = f'<a href="{banner_url}">&#8205;</a>' if banner_url else ""
-        if patch_version:
-            title = f"{banner_tag}⚡ <b>Обновление CS2 • {code_html(patch_version)}</b>\n📅 <i>{date_str}</i>"
+        is_en = (language or "").lower().startswith("en")
+
+        if is_en:
+            title = (
+                f"{banner_tag}⚡ <b>CS2 Update • {code_html(patch_version)}</b>\n📅 <i>{date_str}</i>"
+                if patch_version
+                else f"{banner_tag}⚡ <b>CS2 Update</b>\n📅 <i>{date_str}</i>"
+            )
         else:
-            title = f"{banner_tag}⚡ <b>Обновление CS2</b>\n📅 <i>{date_str}</i>"
+            title = (
+                f"{banner_tag}⚡ <b>Обновление CS2 • {code_html(patch_version)}</b>\n📅 <i>{date_str}</i>"
+                if patch_version
+                else f"{banner_tag}⚡ <b>Обновление CS2</b>\n📅 <i>{date_str}</i>"
+            )
 
         lines = [title]
 
@@ -52,29 +62,43 @@ class TelegramFormatter:
                 lines.append(patch_notes_html)
             elif is_waiting_datamine:
                 # Stage 2: Official patch notes displayed, still waiting for GitHub datamining
-                lines.append("📜 <b>Официальные изменения от Valve:</b>")
+                header = "📜 <b>Valve Official Patch Notes:</b>" if is_en else "📜 <b>Официальные изменения от Valve:</b>"
+                footer = (
+                    "🔎 <i>Dataminers are unpacking update files, searching for hidden changes...</i>"
+                    if is_en
+                    else "🔎 <i>Датамайнеры распаковывают файлы обновления, ищем скрытые изменения...</i>"
+                )
+                lines.append(header)
                 lines.append("")
                 lines.append(patch_notes_html)
                 lines.append("")
-                lines.append("🔎 <i>Датамайнеры распаковывают файлы обновления, ищем скрытые изменения...</i>")
+                lines.append(footer)
             else:
                 # Official patch notes displayed (after datamining timeout or finished)
-                lines.append("📜 <b>Официальные изменения от Valve:</b>")
+                header = "📜 <b>Valve Official Patch Notes:</b>" if is_en else "📜 <b>Официальные изменения от Valve:</b>"
+                lines.append(header)
                 lines.append("")
                 lines.append(patch_notes_html)
 
             if patch_url:
                 lines.append("")
                 if "github.com" in patch_url:
-                    lines.append(f'🌐 <a href="{patch_url}">Изменения файлов на GitHub</a>')
+                    link_text = "View file changes on GitHub" if is_en else "Изменения файлов на GitHub"
                 else:
-                    lines.append(f'🌐 <a href="{patch_url}">Официальный пост в Steam</a>')
+                    link_text = "Official Steam Announcement" if is_en else "Официальный пост в Steam"
+                lines.append(f'🌐 <a href="{patch_url}">{link_text}</a>')
         elif is_timeout:
             lines.append("")
-            lines.append("⚙️ <i>Техническое обновление исполняемых файлов без изменений в геймплее, настройках и интерфейсе.</i>")
+            if is_en:
+                lines.append("⚙️ <i>Technical binary update without gameplay, settings or UI changes.</i>")
+            else:
+                lines.append("⚙️ <i>Техническое обновление исполняемых файлов без изменений в геймплее, настройках и интерфейсе.</i>")
         else:
             # Stage 1: Initial instant alert
             lines.append("")
-            lines.append("⏳ <i>Патч уже загружается в Steam. Ожидаем официальный список изменений от Valve...</i>")
+            if is_en:
+                lines.append("⏳ <i>Patch is downloading on Steam. Awaiting official notes from Valve...</i>")
+            else:
+                lines.append("⏳ <i>Патч уже загружается в Steam. Ожидаем официальный список изменений от Valve...</i>")
 
         return "\n".join(lines)
