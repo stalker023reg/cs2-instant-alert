@@ -9,8 +9,9 @@ from __future__ import annotations
 
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
+from pathlib import Path
 
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, HTTPException, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
@@ -245,5 +246,20 @@ def create_api_app(
 
     # ─── Routes ───
     app.include_router(health.router, prefix="/api")
+
+    # ─── Static Files (Banner & Assets) ───
+    static_dir = (Path(__file__).resolve().parent.parent / "static").resolve()
+
+    @app.get("/static/{filename}")
+    async def get_static_file(filename: str) -> Response:
+        file_path = (static_dir / filename).resolve()
+        if not str(file_path).startswith(str(static_dir)) or not file_path.is_file():
+            raise HTTPException(status_code=404, detail="File not found")
+        media_type = "image/jpeg" if filename.lower().endswith((".jpg", ".jpeg")) else "application/octet-stream"
+        return Response(
+            content=file_path.read_bytes(),
+            media_type=media_type,
+            headers={"Cache-Control": "public, max-age=86400"},
+        )
 
     return app

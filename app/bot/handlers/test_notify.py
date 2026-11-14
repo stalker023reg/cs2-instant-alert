@@ -70,17 +70,31 @@ async def handle_test(update: Update, context: CallbackContext) -> None:
             raw_data=raw_data,
         )
         
+        banner_url = getattr(container.config, "banner_image_url", "https://cs2-instant-alert.fly.dev/static/banner.jpg")
         text = TelegramFormatter.format_update_alert(
             event=event,
             timezone="UTC",
-            language="ru"
+            language="ru",
+            banner_url=banner_url,
         )
         
         text += "\n\n<i>Это ГЛОБАЛЬНОЕ тестовое уведомление.</i>"
 
+        from telegram import LinkPreviewOptions
+        link_preview = (
+            LinkPreviewOptions(url=banner_url, prefer_large_media=True, show_above_text=True)
+            if banner_url
+            else LinkPreviewOptions(is_disabled=True)
+        )
+
         for u in all_active_users:
             try:
-                await context.bot.send_message(chat_id=u.telegram_id, text=text, parse_mode="HTML")
+                await context.bot.send_message(
+                    chat_id=u.telegram_id,
+                    text=text,
+                    parse_mode="HTML",
+                    link_preview_options=link_preview,
+                )
             except Exception as e:
                 await logger.awarning("test_notification_failed_for_user", telegram_id=u.telegram_id, error=str(e))
         

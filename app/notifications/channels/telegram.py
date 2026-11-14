@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import uuid
 
-from telegram import Bot, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram import Bot, InlineKeyboardButton, InlineKeyboardMarkup, LinkPreviewOptions
 from telegram.constants import ParseMode
 from telegram.error import TelegramError
 
@@ -27,8 +27,10 @@ class TelegramChannel(AbstractNotificationChannel):
     """Delivers alerts via Telegram."""
 
     def __init__(self, settings: AppSettings) -> None:
+        self.settings = settings
         token = settings.telegram_bot_token.get_secret_value()
         self.bot = Bot(token=token) if token else None
+        self.banner_url = getattr(settings, "banner_image_url", "https://cs2-instant-alert.fly.dev/static/banner.jpg")
 
     @property
     def channel_type(self) -> str:
@@ -48,6 +50,7 @@ class TelegramChannel(AbstractNotificationChannel):
             event=event,
             timezone=user.timezone,
             language=user.language,
+            banner_url=self.banner_url,
         )
 
         # Acknowledgement button removed
@@ -57,6 +60,12 @@ class TelegramChannel(AbstractNotificationChannel):
 
         from telegram.error import RetryAfter
 
+        link_preview = (
+            LinkPreviewOptions(url=self.banner_url, prefer_large_media=True, show_above_text=True)
+            if self.banner_url
+            else LinkPreviewOptions(is_disabled=True)
+        )
+
         max_retries = 3
         for attempt in range(max_retries):
             try:
@@ -65,7 +74,7 @@ class TelegramChannel(AbstractNotificationChannel):
                     text=text,
                     parse_mode=ParseMode.HTML,
                     reply_markup=reply_markup,
-                    disable_web_page_preview=True,
+                    link_preview_options=link_preview,
                 )
                 
                 # Pin message if enabled
@@ -117,6 +126,13 @@ class TelegramChannel(AbstractNotificationChannel):
             patch_version=patch_version,
             is_timeout=is_timeout,
             is_waiting_datamine=is_waiting_datamine,
+            banner_url=self.banner_url,
+        )
+
+        link_preview = (
+            LinkPreviewOptions(url=self.banner_url, prefer_large_media=True, show_above_text=True)
+            if self.banner_url
+            else LinkPreviewOptions(is_disabled=True)
         )
 
         try:
@@ -125,7 +141,7 @@ class TelegramChannel(AbstractNotificationChannel):
                 message_id=int(message_id),
                 text=text,
                 parse_mode=ParseMode.HTML,
-                disable_web_page_preview=True,
+                link_preview_options=link_preview,
             )
         except TelegramError as e:
             await logger.awarning("telegram_edit_failed", error=str(e), message_id=message_id)

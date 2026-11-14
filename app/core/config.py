@@ -98,7 +98,10 @@ class AppSettings(BaseSettings):
     # ─── AI Analysis (Gemini) ───
     gemini_api_key: SecretStr | None = None
     gemini_model: str = "gemini-3.5-flash"
- 
+
+    # ─── Banner Media ───
+    banner_image_url: str = "https://cs2-instant-alert.fly.dev/static/banner.jpg"
+
     # ─── GitHub Datamining ───
     github_token: SecretStr | None = None
 

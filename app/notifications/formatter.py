@@ -27,6 +27,7 @@ class TelegramFormatter:
         status_text: str | None = None,
         is_timeout: bool = False,
         is_waiting_datamine: bool = False,
+        banner_url: str | None = "https://cs2-instant-alert.fly.dev/static/banner.jpg",
     ) -> str:
         """
         Format an UpdateDetectedEvent for Telegram.
@@ -36,10 +37,11 @@ class TelegramFormatter:
         Stage 3: final enriched alert with player-friendly AI analysis + datamining (or clean timeout).
         """
         date_str = format_date(event.detected_at, timezone)
+        banner_tag = f'<a href="{banner_url}">&#8205;</a>' if banner_url else ""
         if patch_version:
-            title = f"⚡ <b>Обновление CS2 • {code_html(patch_version)}</b>\n📅 <i>{date_str}</i>"
+            title = f"{banner_tag}⚡ <b>Обновление CS2 • {code_html(patch_version)}</b>\n📅 <i>{date_str}</i>"
         else:
-            title = f"⚡ <b>Обновление CS2</b>\n📅 <i>{date_str}</i>"
+            title = f"{banner_tag}⚡ <b>Обновление CS2</b>\n📅 <i>{date_str}</i>"
 
         lines = [title]
 
