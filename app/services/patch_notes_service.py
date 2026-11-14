@@ -44,12 +44,14 @@ class PatchNotesService:
         gemini_service: GeminiAnalysisService | None = None,
         steam_news_fetcher: SteamNewsFetcher | None = None,
         github_fetcher: GitHubDatamineFetcher | None = None,
+        x_publisher: Any | None = None,
     ) -> None:
         self.session_factory = session_factory
         self.telegram = telegram_channel
         self.settings = settings
         self.translation = translation_service
         self.gemini = gemini_service
+        self.x_publisher = x_publisher
 
         self.steam_news_fetcher = steam_news_fetcher or SteamNewsFetcher()
         github_token = (
@@ -346,7 +348,8 @@ class PatchNotesService:
         # ─── 4. Edit Delivered Messages with final report ───
         await self._edit_messages(
             event=event,
-            patch_notes_html=formatted_html,
+            patch_notes_html=formatted_html_ru,
+            patch_notes_html_en=formatted_html_en,
             patch_url=patch_url or (datamine_commit.commit_url if datamine_commit else None),
             patch_version=patch_version,
             ai_analyzed=ai_analyzed,
@@ -354,6 +357,24 @@ class PatchNotesService:
             is_waiting_datamine=False,
             edit_reason="DATAMINE_ANALYZED",
         )
+
+        # ─── 5. Publish to X (Twitter) on Stage 3 ───
+        if self.x_publisher and getattr(self.settings, "x_enabled", False):
+            try:
+                from pathlib import Path
+                from app.notifications.x_formatter import XThreadFormatter
+
+                banner_path = Path(__file__).resolve().parent.parent / "static" / "banner.jpg"
+                thread = XThreadFormatter.format_thread(
+                    event=event,
+                    analysis_en=formatted_html_en or formatted_html_ru or "",
+                    patch_version=patch_version,
+                    patch_url=patch_url or (datamine_commit.commit_url if datamine_commit else None),
+                    telegram_channel_url=getattr(self.settings, "telegram_english_group_url", "https://t.me/cs2_alarm"),
+                )
+                await self.x_publisher.publish_thread(thread, banner_path=banner_path)
+            except Exception as x_err:
+                await logger.awarning("x_publish_stage3_failed", error=str(x_err))
 
     async def _handle_timeout(
         self,

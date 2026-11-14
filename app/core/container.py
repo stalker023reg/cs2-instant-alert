@@ -28,6 +28,7 @@ from app.services.patch_notes_service import PatchNotesService
 from app.services.steam_news_fetcher import SteamNewsFetcher
 from app.services.translation_service import TranslationService
 from app.services.watchdog import SilentWatchdogService
+from app.services.x_publisher_service import XPublisherService
 from app.steam.client import AsyncSteamClient
 from app.steam.multi_source_monitor import MultiSourceMonitor
 from app.steam.pics_monitor import PICSMonitor
@@ -183,6 +184,11 @@ class Container(containers.DeclarativeContainer):
         github_token=config.provided.github_token,
     )
 
+    x_publisher_service = providers.Singleton(
+        XPublisherService,
+        settings=config,
+    )
+
     patch_notes_service = providers.Singleton(
         PatchNotesService,
         session_factory=db_manager.provided.session,
@@ -192,6 +198,7 @@ class Container(containers.DeclarativeContainer):
         gemini_service=gemini_analysis_service,
         steam_news_fetcher=steam_news_fetcher,
         github_fetcher=github_datamine_fetcher,
+        x_publisher=x_publisher_service,
     )
 
     admin_notifier_service = providers.Singleton(

@@ -102,6 +102,15 @@ class AppSettings(BaseSettings):
     # ─── Banner Media ───
     banner_image_url: str = "https://cs2-instant-alert.fly.dev/static/banner.jpg"
 
+    # ─── X (Twitter) ───
+    x_enabled: bool = False
+    x_dry_run: bool = True
+    x_api_key: SecretStr | None = None
+    x_api_secret: SecretStr | None = None
+    x_access_token: SecretStr | None = None
+    x_access_token_secret: SecretStr | None = None
+    telegram_english_group_url: str = "https://t.me/cs2_alarm"
+
     # ─── GitHub Datamining ───
     github_token: SecretStr | None = None
 
