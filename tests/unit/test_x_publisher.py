@@ -44,11 +44,44 @@ class TestXIntegration(unittest.IsolatedAsyncioTestCase):
         self.assertGreaterEqual(len(thread), 3)
         self.assertIn("🚨 CS2 Update • 1.41.9.7 is LIVE!", thread[0])
         self.assertIn("https://t.me/cs2_alarm", thread[-1])
+        self.assertNotIn("github.com", thread[-1])  # Excluded intentionally
         self.assertIn("#CS2", thread[-1])
 
         for idx, tweet in enumerate(thread, start=1):
             self.assertTrue(tweet.startswith(f"[{idx}/{len(thread)}]"))
             self.assertLessEqual(len(tweet), 280)
+
+    def test_thread_formatter_with_curated_tweets(self):
+        curated = [
+            "🎯 Major map rework on Inferno and Vertigo with new bombsite layouts.",
+            "🔎 Datamined 3 new knife models and weapon charm slots.",
+        ]
+        thread = XThreadFormatter.format_thread(
+            event=self.event,
+            analysis_en="Full text",
+            patch_version="1.41.9.8",
+            telegram_channel_url="https://t.me/cs2_alarm",
+            curated_tweets=curated,
+        )
+
+        self.assertEqual(len(thread), 4)  # 1 root + 2 curated + 1 final
+        self.assertIn("Inferno and Vertigo", thread[1])
+        self.assertIn("knife models", thread[2])
+        self.assertIn("https://t.me/cs2_alarm", thread[3])
+
+    def test_thread_formatter_caps_huge_fallback_updates(self):
+        # Generate 15 distinct sections
+        huge_analysis = "\n\n".join([f"🎯 Section {i}:\n• Bullet point for section {i}" for i in range(1, 16)])
+        thread = XThreadFormatter.format_thread(
+            event=self.event,
+            analysis_en=huge_analysis,
+            patch_version="1.41.9.9",
+            telegram_channel_url="https://t.me/cs2_alarm",
+            max_body_tweets=5,
+        )
+
+        # Thread must not exceed 1 root + 5 body + 1 final = 7 tweets max
+        self.assertLessEqual(len(thread), 7)
 
     async def test_publisher_dry_run_mode(self):
         settings = MagicMock(spec=AppSettings)

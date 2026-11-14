@@ -365,12 +365,25 @@ class PatchNotesService:
                 from app.notifications.x_formatter import XThreadFormatter
 
                 banner_path = Path(__file__).resolve().parent.parent / "static" / "banner.jpg"
+                en_text = formatted_html_en or formatted_html_ru or ""
+
+                curated_tweets: list[str] = []
+                if self.gemini and en_text:
+                    try:
+                        curated_tweets = await self.gemini.generate_x_thread(
+                            analysis_en=en_text,
+                            patch_version=patch_version,
+                        )
+                    except Exception as gemini_x_err:
+                        await logger.awarning("gemini_x_thread_curation_failed", error=str(gemini_x_err))
+
                 thread = XThreadFormatter.format_thread(
                     event=event,
-                    analysis_en=formatted_html_en or formatted_html_ru or "",
+                    analysis_en=en_text,
                     patch_version=patch_version,
-                    patch_url=patch_url or (datamine_commit.commit_url if datamine_commit else None),
+                    patch_url=None,  # Excluded intentionally for maximum conversion to Telegram
                     telegram_channel_url=getattr(self.settings, "telegram_english_group_url", "https://t.me/cs2_alarm"),
+                    curated_tweets=curated_tweets,
                 )
                 await self.x_publisher.publish_thread(thread, banner_path=banner_path)
             except Exception as x_err:

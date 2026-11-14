@@ -39,13 +39,15 @@ class XThreadFormatter:
         patch_url: str | None = None,
         telegram_channel_url: str = "https://t.me/cs2_alarm",
         timezone: str = "UTC",
+        curated_tweets: list[str] | None = None,
+        max_body_tweets: int = 5,
     ) -> list[str]:
         """
         Build a list of tweet texts representing the complete thread.
 
         Tweet 1: Root announcement with hook, build, and thread marker (banner attaches here)
-        Tweet 2..N-1: Key highlights and datamining findings split by section & bullet
-        Tweet N: Sources, Telegram community link, and hashtags
+        Tweet 2..N-1: Key highlights and datamining findings (AI-curated or smartly split)
+        Tweet N: Telegram community link and hashtags (GitHub links excluded for max reach & conversion)
         """
         date_str = format_date(event.detected_at, timezone)
         version_part = f"• {patch_version} " if patch_version else ""
@@ -58,22 +60,28 @@ class XThreadFormatter:
             f"Full breakdown & datamining thread below 🧵👇"
         )
 
-        # ─── 2. Body Tweets from analysis_en ───
-        body_tweets = cls._split_analysis_into_tweets(analysis_en)
+        # ─── 2. Body Tweets (Curated by Gemini or algorithmic fallback) ───
+        if curated_tweets and len(curated_tweets) > 0:
+            cleaned_curated: list[str] = []
+            for t in curated_tweets:
+                c = clean_html(t)
+                if c:
+                    cleaned_curated.append(c)
+            body_tweets = cleaned_curated[:max_body_tweets]
+        else:
+            body_tweets = cls._split_analysis_into_tweets(analysis_en, max_tweets=max_body_tweets)
 
-        # ─── 3. Final Tweet: Sources & Community ───
-        final_lines = ["🔗 Details & Sources:\n"]
-        if patch_url:
-            final_lines.append(f"🌐 File Diff: {patch_url}")
-        if telegram_channel_url:
-            final_lines.append(f"👥 English Community: {telegram_channel_url}")
-        final_lines.append("\n#CS2 #CounterStrike2 #CS2Update")
-        tweet_final_raw = "\n".join(final_lines)
+        # ─── 3. Final Tweet: Direct conversion to Telegram community ───
+        tweet_final_raw = (
+            "💬 Instant alerts, raw diffs & discussions in our Telegram community:\n"
+            f"👉 Join: {telegram_channel_url}\n\n"
+            "#CS2 #CounterStrike2 #CS2Update"
+        )
 
         raw_thread = [tweet_1_raw] + body_tweets + [tweet_final_raw]
         total = len(raw_thread)
 
-        # ─── 4. Apply Numbering [1/N] ───
+        # ─── 4. Apply Numbering [1/N] and 280-char safety bounds ───
         numbered_thread: list[str] = []
         for idx, tweet in enumerate(raw_thread, start=1):
             prefix = f"[{idx}/{total}] "
@@ -87,7 +95,7 @@ class XThreadFormatter:
         return numbered_thread
 
     @classmethod
-    def _split_analysis_into_tweets(cls, analysis_html: str) -> list[str]:
+    def _split_analysis_into_tweets(cls, analysis_html: str, max_tweets: int = 5) -> list[str]:
         """Splits HTML analysis into organic tweets grouped by section and bullets."""
         clean_text = clean_html(analysis_html)
         if not clean_text:
@@ -162,5 +170,10 @@ class XThreadFormatter:
 
             if current_tweet.strip() and current_tweet.strip() != header:
                 tweets.append(current_tweet.strip())
+
+        if len(tweets) > max_tweets:
+            capped = tweets[: max_tweets - 1]
+            capped.append("🔎 Additional minor adjustments, workshop fixes & full logs in our community.")
+            return capped
 
         return tweets

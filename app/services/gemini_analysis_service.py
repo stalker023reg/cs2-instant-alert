@@ -488,6 +488,71 @@ INPUT DATA:
 
         return text
 
+    async def generate_x_thread(
+        self,
+        analysis_en: str,
+        patch_version: str | None = None,
+    ) -> list[str]:
+        """
+        Generate an adaptively sized X (Twitter) thread using Gemini Flash.
+        Determines thread size based on update magnitude:
+        - Minor/hotfix: 1-2 body tweets.
+        - Medium: 2-3 body tweets.
+        - Huge/Major: 4-5 body tweets (prioritizing top gameplay, weapons, maps, major leaks).
+        Returns a list of clean body tweet strings (without intro or outro).
+        """
+        if not self._client or not analysis_en or not analysis_en.strip():
+            return []
+
+        prompt = f"""You are the social media director for a top Counter-Strike 2 news channel on X (Twitter).
+Your task is to convert this English patch breakdown into engaging, concise body tweets for an X thread.
+
+Update Version: {patch_version or "N/A"}
+
+English Patch Breakdown:
+{analysis_en}
+
+TASK & SIZING GUIDELINES:
+1. Assess the magnitude of the update:
+   - Minor fix / small hotfix: Generate 1 to 2 body tweets.
+   - Moderate update: Generate 2 to 3 body tweets.
+   - Massive / Major overhaul / Operation: Generate 4 to 5 body tweets MAXIMUM.
+2. Content prioritization:
+   - For massive updates, ruthlessly prioritize: gameplay/shooting feel, weapon/economy balance, map changes, and juicy datamines/leaks.
+   - Ignore minor string updates, typo fixes, or tiny technical trivia.
+3. Formatting Rules:
+   - Write in crisp, authentic CS2 gaming English.
+   - Each tweet MUST be self-contained and UNDER 250 characters.
+   - Use bold or emoji bullet points (e.g. "🎯 Inferno: ...", "🔎 Datamined: ...").
+   - DO NOT include thread numbering like [1/4] (our Python publisher handles that).
+   - DO NOT include an intro tweet ("CS2 update is live") or outro tweet ("join Telegram") — provide ONLY the body content tweets!
+   - Separate each tweet with three dashes on a new line:
+---
+
+Output ONLY the tweets separated by ---:"""
+
+        try:
+            models_to_try = [self.model, "gemini-3.6-flash", "gemini-3.5-flash-lite"]
+            for model_name in models_to_try:
+                try:
+                    resp = await self._client.aio.models.generate_content(
+                        model=model_name,
+                        contents=prompt,
+                    )
+                    if resp and resp.text:
+                        raw_parts = resp.text.split("---")
+                        tweets = [p.strip() for p in raw_parts if p.strip()]
+                        valid_tweets = [t for t in tweets if len(t) > 10]
+                        if valid_tweets:
+                            return valid_tweets[:5]
+                except Exception as e:
+                    await logger.awarning("gemini_x_thread_failed", model=model_name, error=str(e))
+                    continue
+        except Exception as e:
+            await logger.awarning("gemini_x_thread_generation_error", error=str(e))
+
+        return []
+
     def _fallback_analysis(
         self,
         raw_patch_notes: str | None,
