@@ -250,7 +250,7 @@ def create_api_app(
     # ─── Static Files (Banner & Assets) ───
     static_dir = (Path(__file__).resolve().parent.parent / "static").resolve()
 
-    @app.get("/static/{filename}")
+    @app.api_route("/static/{filename}", methods=["GET", "HEAD"])
     async def get_static_file(filename: str) -> Response:
         file_path = (static_dir / filename).resolve()
         if not str(file_path).startswith(str(static_dir)) or not file_path.is_file():
