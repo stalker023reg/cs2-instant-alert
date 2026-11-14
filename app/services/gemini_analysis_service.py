@@ -531,7 +531,16 @@ TASK & SIZING GUIDELINES:
 Output ONLY the tweets separated by ---:"""
 
         try:
-            models_to_try = [self.model, "gemini-3.6-flash", "gemini-3.5-flash-lite"]
+            models_to_try = [self.model]
+            for fallback_name in (
+                "gemini-3.6-flash",
+                "gemini-3.5-flash-lite",
+                "gemini-3.8-flash",
+                "gemini-flash-latest",
+            ):
+                if fallback_name not in models_to_try:
+                    models_to_try.append(fallback_name)
+
             for model_name in models_to_try:
                 try:
                     resp = await self._client.aio.models.generate_content(
