@@ -497,8 +497,8 @@ INPUT DATA:
         Generate an adaptively sized X (Twitter) thread using Gemini Flash.
         Determines thread size based on update magnitude:
         - Minor/hotfix: 1-2 body tweets.
-        - Medium: 2-3 body tweets.
-        - Huge/Major: 4-5 body tweets (prioritizing top gameplay, weapons, maps, major leaks).
+        - Moderate: 2-4 body tweets.
+        - Huge/Major: 4-7 body tweets (covering all gameplay, maps, and juicy datamines).
         Returns a list of clean body tweet strings (without intro or outro).
         """
         if not self._client or not analysis_en or not analysis_en.strip():
@@ -515,11 +515,10 @@ English Patch Breakdown:
 TASK & SIZING GUIDELINES:
 1. Assess the magnitude of the update:
    - Minor fix / small hotfix: Generate 1 to 2 body tweets.
-   - Moderate update: Generate 2 to 3 body tweets.
-   - Massive / Major overhaul / Operation: Generate 4 to 5 body tweets MAXIMUM.
-2. Content prioritization:
-   - For massive updates, ruthlessly prioritize: gameplay/shooting feel, weapon/economy balance, map changes, and juicy datamines/leaks.
-   - Ignore minor string updates, typo fixes, or tiny technical trivia.
+   - Moderate update: Generate 2 to 4 body tweets.
+   - Massive / Major overhaul / Operation: Generate 4 to 7 body tweets.
+2. Content completeness:
+   - Do NOT omit real facts, numbers, or datamined discoveries. Retain all major gameplay, weapon, map, and technical changes from the breakdown without cutting corners.
 3. Formatting Rules:
    - Write in crisp, authentic CS2 gaming English.
    - Each tweet MUST be self-contained and UNDER 250 characters.
@@ -544,7 +543,7 @@ Output ONLY the tweets separated by ---:"""
                         tweets = [p.strip() for p in raw_parts if p.strip()]
                         valid_tweets = [t for t in tweets if len(t) > 10]
                         if valid_tweets:
-                            return valid_tweets[:5]
+                            return valid_tweets[:8]
                 except Exception as e:
                     await logger.awarning("gemini_x_thread_failed", model=model_name, error=str(e))
                     continue

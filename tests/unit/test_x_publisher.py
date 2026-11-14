@@ -64,9 +64,28 @@ class TestXIntegration(unittest.IsolatedAsyncioTestCase):
             curated_tweets=curated,
         )
 
-        self.assertEqual(len(thread), 4)  # 1 root + 2 curated + 1 final
+        # Since curated[-1] has <= 170 chars, CTA is embedded directly into it
+        self.assertEqual(len(thread), 3)  # 1 root + 2 curated (embedded CTA in tweet 2)
         self.assertIn("Inferno and Vertigo", thread[1])
         self.assertIn("knife models", thread[2])
+        self.assertIn("https://t.me/cs2_alarm", thread[2])
+
+    def test_thread_formatter_cta_separate_when_last_tweet_is_full(self):
+        # A long last tweet (> 170 chars) should push CTA to a dedicated tweet
+        long_tweet = "🔎 " + ("Extremely long datamining finding detailing byte changes and shader graphs " * 3)
+        curated = [
+            "🎯 Quick highlight.",
+            long_tweet,
+        ]
+        thread = XThreadFormatter.format_thread(
+            event=self.event,
+            analysis_en="Full text",
+            patch_version="1.41.9.8",
+            telegram_channel_url="https://t.me/cs2_alarm",
+            curated_tweets=curated,
+        )
+
+        self.assertEqual(len(thread), 4)  # 1 root + 2 curated + 1 separate final
         self.assertIn("https://t.me/cs2_alarm", thread[3])
 
     def test_thread_formatter_caps_huge_fallback_updates(self):
