@@ -43,8 +43,9 @@ class TestXIntegration(unittest.IsolatedAsyncioTestCase):
 
         self.assertGreaterEqual(len(thread), 3)
         self.assertIn("🚨 CS2 Update • 1.41.9.7 is LIVE!", thread[0])
-        self.assertIn("https://t.me/cs2_alarm", thread[-1])
-        self.assertNotIn("github.com", thread[-1])  # Excluded intentionally
+        self.assertIn("link in bio", thread[-1].lower())
+        self.assertNotIn("github.com", thread[-1])
+        self.assertNotIn("https://t.me", thread[-1])  # Excluded raw URL to prevent X URL tax & penalties
         self.assertIn("#CS2", thread[-1])
 
         for idx, tweet in enumerate(thread, start=1):
@@ -64,14 +65,14 @@ class TestXIntegration(unittest.IsolatedAsyncioTestCase):
             curated_tweets=curated,
         )
 
-        # Since curated[-1] has <= 170 chars, CTA is embedded directly into it
+        # Since curated[-1] has <= 190 chars, CTA is embedded directly into it
         self.assertEqual(len(thread), 3)  # 1 root + 2 curated (embedded CTA in tweet 2)
         self.assertIn("Inferno and Vertigo", thread[1])
         self.assertIn("knife models", thread[2])
-        self.assertIn("https://t.me/cs2_alarm", thread[2])
+        self.assertIn("link in bio", thread[2].lower())
 
     def test_thread_formatter_cta_separate_when_last_tweet_is_full(self):
-        # A long last tweet (> 170 chars) should push CTA to a dedicated tweet
+        # A long last tweet (> 190 chars) should push CTA to a dedicated tweet
         long_tweet = "🔎 " + ("Extremely long datamining finding detailing byte changes and shader graphs " * 3)
         curated = [
             "🎯 Quick highlight.",
@@ -86,7 +87,7 @@ class TestXIntegration(unittest.IsolatedAsyncioTestCase):
         )
 
         self.assertEqual(len(thread), 4)  # 1 root + 2 curated + 1 separate final
-        self.assertIn("https://t.me/cs2_alarm", thread[3])
+        self.assertIn("link in bio", thread[3].lower())
 
     def test_thread_formatter_caps_huge_fallback_updates(self):
         # Generate 15 distinct sections
@@ -128,6 +129,44 @@ class TestXIntegration(unittest.IsolatedAsyncioTestCase):
         publisher = XPublisherService(settings)
         result = await publisher.publish_thread(["Tweet 1"])
         self.assertEqual(result, [])
+
+    def test_twitter_weighted_length(self):
+        from app.notifications.x_formatter import twitter_weighted_length
+
+        # ASCII
+        self.assertEqual(twitter_weighted_length("Hello CS2"), 9)
+        # Emojis count as 2
+        self.assertEqual(twitter_weighted_length("⚡ CS2"), 6)
+        # URL counts as fixed 23
+        self.assertEqual(twitter_weighted_length("Join: https://t.me/cs2_alarm"), 6 + 23)
+
+    def test_sync_publish_preserves_posted_ids_on_partial_failure(self):
+        settings = MagicMock(spec=AppSettings)
+        settings.x_enabled = True
+        settings.x_dry_run = False
+        settings.x_api_key = "key"
+        settings.x_api_secret = "secret"
+        settings.x_access_token = "token"
+        settings.x_access_token_secret = "token_secret"
+
+        publisher = XPublisherService(settings)
+
+        # Mock tweepy client
+        with patch("tweepy.Client") as mock_client_cls:
+            mock_client = MagicMock()
+            mock_client_cls.return_value = mock_client
+
+            # Root tweet succeeds, 2nd tweet succeeds, 3rd fails
+            mock_client.create_tweet.side_effect = [
+                MagicMock(data={"id": "tweet_1"}),
+                MagicMock(data={"id": "tweet_2"}),
+                Exception("API rate limit or connection error"),
+            ]
+
+            posted = publisher._sync_publish(["Post 1", "Post 2", "Post 3"])
+
+            # Must return the 2 successfully created tweets, not empty list!
+            self.assertEqual(posted, ["tweet_1", "tweet_2"])
 
 
 if __name__ == "__main__":

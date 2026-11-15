@@ -27,6 +27,25 @@ def clean_html(text: str) -> str:
     return text.strip()
 
 
+def twitter_weighted_length(text: str) -> int:
+    """
+    Computes text length according to official Twitter / X text counting rules:
+    - Standard ASCII characters: 1 weight
+    - Emojis and extended Unicode codepoints: 2 weight
+    - URLs (http:// or https://): 23 fixed weight (t.co transform)
+    """
+    # Replace URLs with 23 placeholder characters
+    text_no_urls = re.sub(r"https?://\S+", "X" * 23, text)
+    weight = 0
+    for char in text_no_urls:
+        code = ord(char)
+        if code > 4351 or (0x1F000 <= code <= 0x1FFFF):
+            weight += 2
+        else:
+            weight += 1
+    return weight
+
+
 class XThreadFormatter:
     """Formats CS2 update events into an organic X (Twitter) thread."""
 
@@ -73,17 +92,17 @@ class XThreadFormatter:
 
         # ─── 3. Embed Telegram CTA into the last tweet (or append closing tweet if full) ───
         cta_suffix = (
-            f"\n\n⚡ Want CS2 alerts earlier? Join: {telegram_channel_url}\n"
+            "\n\n⚡ Want instant CS2 alerts earlier? Link in bio!\n"
             "#CS2 #CounterStrike2 #CS2Update"
         )
 
-        if body_tweets and (len(body_tweets[-1]) <= 170):
+        if body_tweets and (twitter_weighted_length(body_tweets[-1]) <= 190):
             body_tweets[-1] = body_tweets[-1] + cta_suffix
             raw_thread = [tweet_1_raw] + body_tweets
         else:
             tweet_final_raw = (
-                "⚡ Want CS2 alerts earlier? Join our Telegram community:\n"
-                f"👉 {telegram_channel_url}\n\n"
+                "⚡ Want instant CS2 alerts earlier?\n"
+                "👉 Join our Telegram community (link in bio)!\n\n"
                 "#CS2 #CounterStrike2 #CS2Update"
             )
             raw_thread = [tweet_1_raw] + body_tweets + [tweet_final_raw]
@@ -95,10 +114,14 @@ class XThreadFormatter:
         for idx, tweet in enumerate(raw_thread, start=1):
             prefix = f"[{idx}/{total}] "
             numbered_text = f"{prefix}{tweet}"
-            # Safety check: if text slightly exceeds max, trim gracefully at word boundary
-            if len(numbered_text) > 280:
-                cut = numbered_text.rfind(" ", 0, 275)
-                numbered_text = numbered_text[:cut] + "…" if cut > 100 else numbered_text[:279]
+            # Safety check: if weighted text exceeds 280, trim gracefully at word boundary
+            while twitter_weighted_length(numbered_text) > 280:
+                cut = numbered_text.rfind(" ", 0, len(numbered_text) - 5)
+                if cut > 20:
+                    numbered_text = numbered_text[:cut] + "…"
+                else:
+                    numbered_text = numbered_text[:-5] + "…"
+                    break
             numbered_thread.append(numbered_text)
 
         return numbered_thread

@@ -46,6 +46,14 @@ class UpdateRepository(BaseRepository[Update]):
 
             await self.update(update_obj, timeline=timeline)
 
+    async def is_x_thread_published(self, update_id: uuid.UUID) -> bool:
+        """Check if an X (Twitter) thread was already published for this update."""
+        update_obj = await self.get_by_id(update_id)
+        if not update_obj or not update_obj.timeline:
+            return False
+        events = update_obj.timeline.get("events", [])
+        return any(e.get("type") == "x_thread_published" for e in events)
+
     async def get_by_build_id(
         self, game_id: uuid.UUID, build_id: str
     ) -> Update | None:

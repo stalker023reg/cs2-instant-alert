@@ -62,6 +62,7 @@ class PatchNotesService:
         self.github_fetcher = github_fetcher or GitHubDatamineFetcher(github_token=github_token)
 
         self._tasks: set[asyncio.Task] = set()
+        self._x_publishing_updates: set[uuid.UUID] = set()
 
     async def recover_pending_updates(self) -> None:
         """Find recent updates that haven't received datamining/patch notes and restart polling."""
@@ -359,35 +360,91 @@ class PatchNotesService:
         )
 
         # ─── 5. Publish to X (Twitter) on Stage 3 ───
-        if self.x_publisher and getattr(self.settings, "x_enabled", False):
-            try:
-                from pathlib import Path
-                from app.notifications.x_formatter import XThreadFormatter
+        await self._publish_to_x_if_needed(
+            event=event,
+            en_text=formatted_html_en or formatted_html_ru or "",
+            patch_version=patch_version,
+        )
 
-                banner_path = Path(__file__).resolve().parent.parent / "static" / "banner.jpg"
-                en_text = formatted_html_en or formatted_html_ru or ""
+    async def _publish_to_x_if_needed(
+        self,
+        event: UpdateDetectedEvent,
+        en_text: str | None,
+        patch_version: str | None = None,
+    ) -> None:
+        """Publish update thread to X with state tracking and deduplication."""
+        if not self.x_publisher or not getattr(self.settings, "x_enabled", False):
+            return
 
-                curated_tweets: list[str] = []
-                if self.gemini and en_text:
-                    try:
-                        curated_tweets = await self.gemini.generate_x_thread(
-                            analysis_en=en_text,
-                            patch_version=patch_version,
-                        )
-                    except Exception as gemini_x_err:
-                        await logger.awarning("gemini_x_thread_curation_failed", error=str(gemini_x_err))
+        if not en_text or not en_text.strip():
+            return
 
-                thread = XThreadFormatter.format_thread(
-                    event=event,
-                    analysis_en=en_text,
-                    patch_version=patch_version,
-                    patch_url=None,  # Excluded intentionally for maximum conversion to Telegram
-                    telegram_channel_url=getattr(self.settings, "telegram_english_group_url", "https://t.me/cs2_alarm"),
-                    curated_tweets=curated_tweets,
+        # 1. In-memory concurrency guard
+        if event.update_id in self._x_publishing_updates:
+            await logger.ainfo("x_publish_already_in_progress", update_id=str(event.update_id))
+            return
+
+        self._x_publishing_updates.add(event.update_id)
+        try:
+            # 2. Database deduplication check
+            from app.repositories.update_repository import UpdateRepository
+
+            async with self.session_factory() as session:
+                update_repo = UpdateRepository(session)
+                if await update_repo.is_x_thread_published(event.update_id):
+                    await logger.ainfo("x_publish_already_published", update_id=str(event.update_id))
+                    return
+
+            from pathlib import Path
+            from app.notifications.x_formatter import XThreadFormatter
+
+            banner_path = Path(__file__).resolve().parent.parent / "static" / "banner.jpg"
+
+            curated_tweets: list[str] = []
+            if self.gemini and en_text:
+                try:
+                    curated_tweets = await self.gemini.generate_x_thread(
+                        analysis_en=en_text,
+                        patch_version=patch_version,
+                    )
+                except Exception as gemini_x_err:
+                    await logger.awarning("gemini_x_thread_curation_failed", error=str(gemini_x_err))
+
+            thread = XThreadFormatter.format_thread(
+                event=event,
+                analysis_en=en_text,
+                patch_version=patch_version,
+                patch_url=None,
+                telegram_channel_url=getattr(self.settings, "telegram_english_group_url", "https://t.me/cs2_alarm"),
+                curated_tweets=curated_tweets,
+            )
+
+            tweet_ids = await self.x_publisher.publish_thread(thread, banner_path=banner_path)
+
+            if tweet_ids:
+                async with self.session_factory() as session:
+                    update_repo = UpdateRepository(session)
+                    await update_repo.append_timeline_event(
+                        update_id=event.update_id,
+                        event_type="x_thread_published",
+                        source="X / Twitter (@cs2_alert)",
+                        metadata={
+                            "tweet_ids": tweet_ids,
+                            "root_tweet_id": tweet_ids[0],
+                            "tweets_count": len(tweet_ids),
+                        },
+                    )
+                    await session.commit()
+                await logger.ainfo(
+                    "x_thread_published_successfully",
+                    update_id=str(event.update_id),
+                    root_tweet_id=tweet_ids[0],
+                    count=len(tweet_ids),
                 )
-                await self.x_publisher.publish_thread(thread, banner_path=banner_path)
-            except Exception as x_err:
-                await logger.awarning("x_publish_stage3_failed", error=str(x_err))
+        except Exception as x_err:
+            await logger.awarning("x_publish_failed", update_id=str(event.update_id), error=str(x_err))
+        finally:
+            self._x_publishing_updates.discard(event.update_id)
 
     async def _handle_timeout(
         self,
@@ -414,6 +471,13 @@ class PatchNotesService:
                 is_timeout=True,
                 is_waiting_datamine=False,
                 edit_reason="DATAMINE_TIMEOUT",
+            )
+
+            # Publish official patch notes to X even if GitHub datamine timed out
+            await self._publish_to_x_if_needed(
+                event=event,
+                en_text=formatted_html_en or formatted_html_ru or "",
+                patch_version=None,
             )
         else:
             await self._edit_messages(

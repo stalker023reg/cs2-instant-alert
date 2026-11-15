@@ -140,12 +140,16 @@ class XPublisherService:
         prev_id = root_id
 
         # 4. Post Reply Chain
-        for tweet_text in thread[1:]:
-            reply_resp = client.create_tweet(
-                text=tweet_text,
-                in_reply_to_tweet_id=prev_id,
-            )
-            prev_id = str(reply_resp.data["id"])
-            posted_ids.append(prev_id)
+        for idx, tweet_text in enumerate(thread[1:], start=2):
+            try:
+                reply_resp = client.create_tweet(
+                    text=tweet_text,
+                    in_reply_to_tweet_id=prev_id,
+                )
+                prev_id = str(reply_resp.data["id"])
+                posted_ids.append(prev_id)
+            except Exception as chain_err:
+                print(f"[XPublisher] Partial thread break at {idx}/{len(thread)}: {chain_err}")
+                break
 
         return posted_ids
