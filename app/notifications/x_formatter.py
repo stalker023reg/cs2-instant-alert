@@ -182,7 +182,7 @@ class XThreadFormatter:
             for bullet in bullets:
                 # If bullet itself is massive, trim or add
                 candidate = f"{current_tweet}\n{bullet}".strip()
-                if len(candidate) <= target_max:
+                if twitter_weighted_length(candidate) <= target_max:
                     current_tweet = candidate
                 else:
                     # Flush previous tweet if non-empty
@@ -192,13 +192,21 @@ class XThreadFormatter:
                     clean_h = header.rstrip(":")
                     cont_header = f"{clean_h} (cont.):" if header else ""
                     new_candidate = f"{cont_header}\n{bullet}".strip()
-                    if len(new_candidate) <= target_max:
+                    if twitter_weighted_length(new_candidate) <= target_max:
                         current_tweet = new_candidate
                     else:
                         # Single bullet is longer than target_max, truncate at word boundary
-                        cut = new_candidate.rfind(" ", 0, target_max - 2)
-                        tweets.append(new_candidate[:cut] + "…")
-                        current_tweet = f"…{new_candidate[cut:]}".strip()
+                        cut = new_candidate.rfind(" ", 0, min(len(new_candidate), target_max - 2))
+                        if cut > 20:
+                            tweets.append(new_candidate[:cut] + "…")
+                            current_tweet = f"…{new_candidate[cut:]}".strip()
+                        else:
+                            # Trim using weighted length safely
+                            trimmed = new_candidate
+                            while twitter_weighted_length(trimmed) > target_max and len(trimmed) > 5:
+                                trimmed = trimmed[:-5] + "…"
+                            tweets.append(trimmed)
+                            current_tweet = ""
 
             if current_tweet.strip() and current_tweet.strip() != header:
                 tweets.append(current_tweet.strip())

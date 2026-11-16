@@ -46,13 +46,36 @@ class UpdateRepository(BaseRepository[Update]):
 
             await self.update(update_obj, timeline=timeline)
 
-    async def is_x_thread_published(self, update_id: uuid.UUID) -> bool:
-        """Check if an X (Twitter) thread was already published for this update."""
+    async def get_x_thread_info(self, update_id: uuid.UUID) -> dict[str, Any] | None:
+        """
+        Get the latest X thread publication details from the update timeline.
+        Returns a dict with 'status' ('published' or 'partial'), 'tweet_ids',
+        'root_tweet_id', 'last_tweet_id', 'total_tweets' if recorded, or None.
+        """
         update_obj = await self.get_by_id(update_id)
         if not update_obj or not update_obj.timeline:
-            return False
+            return None
         events = update_obj.timeline.get("events", [])
-        return any(e.get("type") == "x_thread_published" for e in events)
+        # Search backwards for latest X event
+        for e in reversed(events):
+            if e.get("type") in ("x_thread_published", "x_thread_partial"):
+                meta = e.get("metadata") or {}
+                status = "published" if e.get("type") == "x_thread_published" else "partial"
+                tweet_ids = meta.get("tweet_ids") or []
+                return {
+                    "status": status,
+                    "event_type": e.get("type"),
+                    "tweet_ids": tweet_ids,
+                    "root_tweet_id": meta.get("root_tweet_id") or (tweet_ids[0] if tweet_ids else None),
+                    "last_tweet_id": meta.get("last_tweet_id") or (tweet_ids[-1] if tweet_ids else None),
+                    "total_tweets": meta.get("total_tweets", len(tweet_ids)),
+                }
+        return None
+
+    async def is_x_thread_published(self, update_id: uuid.UUID) -> bool:
+        """Check if an X (Twitter) thread was FULLY published for this update."""
+        info = await self.get_x_thread_info(update_id)
+        return info is not None and info.get("status") == "published"
 
     async def get_by_build_id(
         self, game_id: uuid.UUID, build_id: str

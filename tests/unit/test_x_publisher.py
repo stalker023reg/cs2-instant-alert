@@ -168,6 +168,105 @@ class TestXIntegration(unittest.IsolatedAsyncioTestCase):
             # Must return the 2 successfully created tweets, not empty list!
             self.assertEqual(posted, ["tweet_1", "tweet_2"])
 
+    def test_sync_publish_resumes_from_reply_to_tweet_id(self):
+        settings = MagicMock(spec=AppSettings)
+        settings.x_enabled = True
+        settings.x_dry_run = False
+        settings.x_api_key = "key"
+        settings.x_api_secret = "secret"
+        settings.x_access_token = "token"
+        settings.x_access_token_secret = "token_secret"
+
+        publisher = XPublisherService(settings)
+
+        with patch("tweepy.Client") as mock_client_cls:
+            mock_client = MagicMock()
+            mock_client_cls.return_value = mock_client
+
+            mock_client.create_tweet.side_effect = [
+                MagicMock(data={"id": "tweet_3"}),
+                MagicMock(data={"id": "tweet_4"}),
+            ]
+
+            posted = publisher._sync_publish(
+                thread=["Post 3", "Post 4"],
+                reply_to_tweet_id="tweet_2",
+            )
+
+            self.assertEqual(posted, ["tweet_3", "tweet_4"])
+            # Verify calls: Post 3 must reply to tweet_2, Post 4 must reply to tweet_3
+            mock_client.create_tweet.assert_any_call(text="Post 3", in_reply_to_tweet_id="tweet_2")
+            mock_client.create_tweet.assert_any_call(text="Post 4", in_reply_to_tweet_id="tweet_3")
+
+    async def test_update_repository_x_thread_info_and_deduplication(self):
+        from app.repositories.update_repository import UpdateRepository
+        from app.models.update import Update
+
+        update_id = uuid.uuid4()
+        mock_session = MagicMock()
+
+        # 1. Update with no X events
+        empty_update = MagicMock(spec=Update)
+        empty_update.id = update_id
+        empty_update.timeline = {"events": []}
+
+        repo = UpdateRepository(mock_session)
+        with patch.object(repo, "get_by_id", return_value=empty_update):
+            info = await repo.get_x_thread_info(update_id)
+            self.assertIsNone(info)
+            self.assertFalse(await repo.is_x_thread_published(update_id))
+
+        # 2. Update with partial X event
+        partial_update = MagicMock(spec=Update)
+        partial_update.id = update_id
+        partial_update.timeline = {
+            "events": [
+                {
+                    "type": "x_thread_partial",
+                    "metadata": {
+                        "tweet_ids": ["tweet_1", "tweet_2"],
+                        "root_tweet_id": "tweet_1",
+                        "total_tweets": 4,
+                    },
+                }
+            ]
+        }
+        with patch.object(repo, "get_by_id", return_value=partial_update):
+            info = await repo.get_x_thread_info(update_id)
+            self.assertIsNotNone(info)
+            self.assertEqual(info["status"], "partial")
+            self.assertEqual(info["tweet_ids"], ["tweet_1", "tweet_2"])
+            self.assertEqual(info["last_tweet_id"], "tweet_2")
+            # Must NOT be considered fully published
+            self.assertFalse(await repo.is_x_thread_published(update_id))
+
+        # 3. Update with fully completed X event
+        completed_update = MagicMock(spec=Update)
+        completed_update.id = update_id
+        completed_update.timeline = {
+            "events": [
+                {
+                    "type": "x_thread_partial",
+                    "metadata": {"tweet_ids": ["tweet_1"]},
+                },
+                {
+                    "type": "x_thread_published",
+                    "metadata": {
+                        "tweet_ids": ["tweet_1", "tweet_2", "tweet_3", "tweet_4"],
+                        "root_tweet_id": "tweet_1",
+                        "total_tweets": 4,
+                    },
+                },
+            ]
+        }
+        with patch.object(repo, "get_by_id", return_value=completed_update):
+            info = await repo.get_x_thread_info(update_id)
+            self.assertIsNotNone(info)
+            self.assertEqual(info["status"], "published")
+            self.assertEqual(len(info["tweet_ids"]), 4)
+            # Must be recognized as fully published
+            self.assertTrue(await repo.is_x_thread_published(update_id))
+
 
 if __name__ == "__main__":
     unittest.main()

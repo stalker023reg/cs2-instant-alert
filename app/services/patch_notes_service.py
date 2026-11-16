@@ -386,12 +386,13 @@ class PatchNotesService:
 
         self._x_publishing_updates.add(event.update_id)
         try:
-            # 2. Database deduplication check
+            # 2. Database deduplication & publication status check
             from app.repositories.update_repository import UpdateRepository
 
             async with self.session_factory() as session:
                 update_repo = UpdateRepository(session)
-                if await update_repo.is_x_thread_published(event.update_id):
+                x_info = await update_repo.get_x_thread_info(event.update_id)
+                if x_info and x_info.get("status") == "published":
                     await logger.ainfo("x_publish_already_published", update_id=str(event.update_id))
                     return
 
@@ -419,28 +420,68 @@ class PatchNotesService:
                 curated_tweets=curated_tweets,
             )
 
-            tweet_ids = await self.x_publisher.publish_thread(thread, banner_path=banner_path)
+            # Check if we are resuming a previously interrupted/partial thread
+            already_posted_ids: list[str] = []
+            if x_info and x_info.get("status") == "partial":
+                already_posted_ids = x_info.get("tweet_ids") or []
 
-            if tweet_ids:
+            if already_posted_ids and len(already_posted_ids) < len(thread):
+                last_tweet_id = already_posted_ids[-1]
+                remaining_thread = thread[len(already_posted_ids):]
+                await logger.ainfo(
+                    "x_publish_resuming_partial_thread",
+                    update_id=str(event.update_id),
+                    already_posted_count=len(already_posted_ids),
+                    remaining_count=len(remaining_thread),
+                    reply_to_tweet_id=last_tweet_id,
+                )
+                new_tweet_ids = await self.x_publisher.publish_thread(
+                    remaining_thread,
+                    reply_to_tweet_id=last_tweet_id,
+                )
+                all_posted_ids = already_posted_ids + new_tweet_ids
+            else:
+                new_tweet_ids = await self.x_publisher.publish_thread(
+                    thread,
+                    banner_path=banner_path,
+                )
+                all_posted_ids = new_tweet_ids
+
+            if all_posted_ids:
+                is_full = len(all_posted_ids) >= len(thread)
+                event_type = "x_thread_published" if is_full else "x_thread_partial"
+
                 async with self.session_factory() as session:
                     update_repo = UpdateRepository(session)
                     await update_repo.append_timeline_event(
                         update_id=event.update_id,
-                        event_type="x_thread_published",
+                        event_type=event_type,
                         source="X / Twitter (@cs2_alert)",
                         metadata={
-                            "tweet_ids": tweet_ids,
-                            "root_tweet_id": tweet_ids[0],
-                            "tweets_count": len(tweet_ids),
+                            "tweet_ids": all_posted_ids,
+                            "root_tweet_id": all_posted_ids[0],
+                            "last_tweet_id": all_posted_ids[-1],
+                            "tweets_count": len(all_posted_ids),
+                            "total_tweets": len(thread),
+                            "is_complete": is_full,
                         },
                     )
                     await session.commit()
-                await logger.ainfo(
-                    "x_thread_published_successfully",
-                    update_id=str(event.update_id),
-                    root_tweet_id=tweet_ids[0],
-                    count=len(tweet_ids),
-                )
+
+                if is_full:
+                    await logger.ainfo(
+                        "x_thread_published_successfully",
+                        update_id=str(event.update_id),
+                        root_tweet_id=all_posted_ids[0],
+                        count=len(all_posted_ids),
+                    )
+                else:
+                    await logger.awarning(
+                        "x_thread_partially_published",
+                        update_id=str(event.update_id),
+                        posted_count=len(all_posted_ids),
+                        total_expected=len(thread),
+                    )
         except Exception as x_err:
             await logger.awarning("x_publish_failed", update_id=str(event.update_id), error=str(x_err))
         finally:
