@@ -27,6 +27,7 @@ from app.services.translation_service import TranslationService
 from app.utils.formatting import format_steam_patchnotes_html
 
 if TYPE_CHECKING:
+    from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
     from app.services.gemini_analysis_service import GeminiAnalysisService
 
 logger = get_logger("system")
@@ -37,7 +38,7 @@ class PatchNotesService:
 
     def __init__(
         self,
-        session_factory,
+        session_factory: async_sessionmaker[AsyncSession] | Any,
         telegram_channel: TelegramChannel,
         settings: AppSettings,
         translation_service: TranslationService | None = None,
@@ -61,7 +62,7 @@ class PatchNotesService:
         )
         self.github_fetcher = github_fetcher or GitHubDatamineFetcher(github_token=github_token)
 
-        self._tasks: set[asyncio.Task] = set()
+        self._tasks: set[asyncio.Task[Any]] = set()
         self._x_publishing_updates: set[uuid.UUID] = set()
 
     async def recover_pending_updates(self) -> None:
@@ -614,9 +615,9 @@ class PatchNotesService:
                 if update:
                     if update.depot_changes and isinstance(update.depot_changes, dict):
                         changed = update.depot_changes.get("changed")
-                        if changed:
+                        if isinstance(changed, dict):
                             return changed
-                    if update.manifest_changes:
+                    if isinstance(update.manifest_changes, dict):
                         return update.manifest_changes
         except Exception as e:
             await logger.awarning("manifest_changes_fetch_failed", error=str(e))
