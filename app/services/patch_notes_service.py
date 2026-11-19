@@ -129,17 +129,22 @@ class PatchNotesService:
 
     async def _poll_loop(self, event: UpdateDetectedEvent) -> None:
         """
-        Progressive 3-Stage Background Polling:
+        Progressive 3-Stage Background Polling with Smart Patchnotes Waiting:
         - Stage 1: Already sent immediately on detection.
-        - Stage 2: When Steam News API returns official patch notes (edit with official notes + wait for datamine).
-        - Stage 3: When GameTracking-CS2 commit appears (final edit with full Gemini AI datamining).
+        - Stage 2: When Steam News API returns official patch notes while waiting for datamine.
+        - Stage 3: Enriched final report combining official Valve patch notes + deep git datamining.
+                   Waits up to 25 minutes for Valve's official patch notes so they are merged
+                   together into one definitive, professional update digest.
         """
         start_time = datetime.now(UTC)
-        max_duration = 90 * 60  # 90 minutes
-        base_interval = 45  # 45 seconds initial interval
+        max_duration = 45 * 60  # 45 minutes overall timeout
+        base_interval = 30  # 30 seconds interval
+        max_news_wait_seconds = 25 * 60  # 25 minutes wait window for Valve's release notes
 
         has_posted_official_notes = False
         cached_news_item: Any | None = None
+        cached_datamine_commit: Any | None = None
+        has_logged_wait_for_news = False
 
         await logger.ainfo(
             "datamine_polling_started",
@@ -153,7 +158,14 @@ class PatchNotesService:
                 elapsed = (now - start_time).total_seconds()
                 if elapsed > max_duration:
                     await logger.ainfo("datamine_polling_timeout", update_id=str(event.update_id))
-                    await self._handle_timeout(event, cached_news_item)
+                    if cached_datamine_commit:
+                        await self._process_and_edit_final(
+                            event=event,
+                            news_item=cached_news_item,
+                            datamine_commit=cached_datamine_commit,
+                        )
+                    else:
+                        await self._handle_timeout(event, cached_news_item)
                     break
 
                 try:
@@ -161,44 +173,78 @@ class PatchNotesService:
                     if not cached_news_item:
                         cached_news_item = await self.steam_news_fetcher.fetch_latest_patchnotes(event.detected_at)
 
-                    # 2. Check GitHub GameTracking-CS2
-                    datamine_commit = await self.github_fetcher.fetch_matching_commit(event.detected_at)
+                    # 2. Check GitHub GameTracking-CS2 if we haven't found matching commit yet
+                    if not cached_datamine_commit:
+                        cached_datamine_commit = await self.github_fetcher.fetch_matching_commit(event.detected_at)
+                        if cached_datamine_commit:
+                            await logger.ainfo(
+                                "datamine_commit_ready",
+                                update_id=str(event.update_id),
+                                sha=cached_datamine_commit.commit_sha,
+                                patch_version=cached_datamine_commit.patch_version,
+                            )
 
-                    # If GitHub datamining is ready -> Final Stage 3!
-                    if datamine_commit:
+                    # 3. Decision Logic:
+                    # Case A: BOTH official notes and datamining are ready -> Complete definitive report!
+                    if cached_datamine_commit and cached_news_item:
                         await logger.ainfo(
-                            "datamine_commit_ready",
+                            "datamine_and_official_notes_both_ready",
                             update_id=str(event.update_id),
-                            sha=datamine_commit.commit_sha,
-                            patch_version=datamine_commit.patch_version,
+                            news_gid=cached_news_item.gid,
+                            commit_sha=cached_datamine_commit.commit_sha,
                         )
                         await self._process_and_edit_final(
                             event=event,
                             news_item=cached_news_item,
-                            datamine_commit=datamine_commit,
+                            datamine_commit=cached_datamine_commit,
                         )
                         return
 
-                    # Stage 2: Official patch notes are ready, but datamining is still compiling
-                    elif cached_news_item and not has_posted_official_notes:
-                        await logger.ainfo(
-                            "official_patchnotes_stage2_ready",
-                            update_id=str(event.update_id),
-                            url=cached_news_item.url,
-                        )
-                        await self._process_and_edit_stage2(
-                            event=event,
-                            news_item=cached_news_item,
-                        )
-                        has_posted_official_notes = True
-                        # DO NOT return! Continue polling for GitHub datamining!
+                    # Case B: Datamining is ready, but Valve's official patch notes are not out yet
+                    elif cached_datamine_commit and not cached_news_item:
+                        if elapsed < max_news_wait_seconds:
+                            if not has_logged_wait_for_news:
+                                await logger.ainfo(
+                                    "datamine_ready_waiting_for_official_patchnotes",
+                                    update_id=str(event.update_id),
+                                    wait_timeout_seconds=int(max_news_wait_seconds - elapsed),
+                                )
+                                has_logged_wait_for_news = True
+                            # Continue polling Steam News every interval
+                        else:
+                            # 25-minute window for Valve patch notes expired -> silent update or hotfix without notes
+                            await logger.ainfo(
+                                "official_patchnotes_wait_expired_finalizing_with_datamine_only",
+                                update_id=str(event.update_id),
+                            )
+                            await self._process_and_edit_final(
+                                event=event,
+                                news_item=None,
+                                datamine_commit=cached_datamine_commit,
+                            )
+                            return
+
+                    # Case C: Official patch notes arrived FIRST, datamining still compiling
+                    elif cached_news_item and not cached_datamine_commit:
+                        if not has_posted_official_notes:
+                            await logger.ainfo(
+                                "official_patchnotes_stage2_ready",
+                                update_id=str(event.update_id),
+                                url=cached_news_item.url,
+                            )
+                            await self._process_and_edit_stage2(
+                                event=event,
+                                news_item=cached_news_item,
+                            )
+                            has_posted_official_notes = True
+                        # Continue polling for GitHub datamining!
 
                 except asyncio.CancelledError:
                     raise
                 except Exception as e:
                     await logger.aerror("datamine_polling_tick_error", error=str(e), exc_info=True)
 
-                current_interval = base_interval if elapsed < 1800 else 60
+                current_interval = base_interval if elapsed < 1200 else 45
                 await asyncio.sleep(current_interval)
 
         except asyncio.CancelledError:
@@ -255,6 +301,7 @@ class PatchNotesService:
         """Stage 3: Run Gemini AI analysis on real diff + patch notes and edit delivered Telegram messages."""
         raw_patch_notes = news_item.contents if news_item else None
         patch_url = news_item.url if news_item else None
+        steam_patch_url = patch_url or "https://store.steampowered.com/news/app/730"
 
         git_diff = datamine_commit.filtered_diff if datamine_commit else None
         patch_version = datamine_commit.patch_version if datamine_commit else None
@@ -279,19 +326,41 @@ class PatchNotesService:
                 if not analysis_ru.error:
                     ai_analyzed = True
 
-                # Generate English version for English channels/groups
-                try:
-                    analysis_en = await self.gemini.analyze_update(
-                        raw_patch_notes=raw_patch_notes,
-                        git_diff=git_diff,
-                        patch_version=patch_version,
-                        manifest_changes=manifest_changes,
-                        language="en",
+                # Generate English version for English channels/groups (only if needed)
+                need_english = getattr(self.settings, "x_enabled", False)
+                if not need_english:
+                    try:
+                        from app.repositories.user_repository import UserRepository
+
+                        async with self.session_factory() as session:
+                            user_repo = UserRepository(session)
+                            active_users = await user_repo.get_active_users()
+                            need_english = any(
+                                (getattr(u, "language", "ru") or "").lower().startswith("en")
+                                for u in active_users
+                            )
+                    except Exception as chk_err:
+                        await logger.awarning("check_english_recipients_failed", error=str(chk_err))
+                        need_english = False
+
+                if need_english:
+                    try:
+                        analysis_en = await self.gemini.analyze_update(
+                            raw_patch_notes=raw_patch_notes,
+                            git_diff=git_diff,
+                            patch_version=patch_version,
+                            manifest_changes=manifest_changes,
+                            language="en",
+                        )
+                        formatted_html_en = analysis_en.summary_html
+                    except Exception as en_err:
+                        await logger.awarning("gemini_english_analysis_failed", error=str(en_err))
+                        formatted_html_en = None
+                else:
+                    await logger.ainfo(
+                        "skip_english_gemini_analysis",
+                        reason="no_english_recipients_and_x_disabled",
                     )
-                    formatted_html_en = analysis_en.summary_html
-                except Exception as en_err:
-                    await logger.awarning("gemini_english_analysis_failed", error=str(en_err))
-                    formatted_html_en = None
 
             except Exception as e:
                 await logger.awarning("gemini_datamine_analysis_failed", error=str(e))
@@ -337,10 +406,11 @@ class PatchNotesService:
                     update = await update_repo.get_by_id(event.update_id)
                     if update:
                         update.version = patch_version
+                steam_patch_url = patch_url or "https://store.steampowered.com/news/app/730"
                 await update_repo.update_patch_notes(
                     event.update_id,
                     raw_patch_notes or "",
-                    patch_url or (datamine_commit.commit_url if datamine_commit else None),
+                    steam_patch_url,
                 )
                 await session.commit()
         except Exception as db_err:
@@ -351,7 +421,7 @@ class PatchNotesService:
             event=event,
             patch_notes_html=formatted_html_ru,
             patch_notes_html_en=formatted_html_en,
-            patch_url=patch_url or (datamine_commit.commit_url if datamine_commit else None),
+            patch_url=steam_patch_url,
             patch_version=patch_version,
             ai_analyzed=ai_analyzed,
             is_timeout=False,

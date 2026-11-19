@@ -157,10 +157,10 @@ class TestTelegramFormatter(unittest.TestCase):
             patch_version="1.41.9.7",
             patch_notes_html="🎯 <b>Key Highlights:</b>\n• Animation fixes",
             ai_analyzed=True,
-            patch_url="https://github.com/diff",
+            patch_url="https://store.steampowered.com/news/123",
         )
         self.assertIn("CS2 Update • <code>1.41.9.7</code>", msg_stage3)
-        self.assertIn("View file changes on GitHub", msg_stage3)
+        self.assertIn("Official Steam Announcement", msg_stage3)
 
 
 class TestGitHubDatamineParsing(unittest.TestCase):
@@ -239,6 +239,99 @@ class TestGeminiPromptAndSanitization(unittest.TestCase):
         self.assertIn("<b>Bold text</b>", cleaned)
         self.assertIn("<code>code</code>", cleaned)
         self.assertIn("content", cleaned)
+
+
+class TestSkipEnglishAnalysis(unittest.IsolatedAsyncioTestCase):
+    async def test_skip_english_when_x_disabled_and_no_english_users(self):
+        from unittest.mock import AsyncMock, MagicMock
+        from app.services.patch_notes_service import PatchNotesService
+
+        gemini_mock = MagicMock()
+        gemini_mock.is_available = True
+        gemini_mock.analyze_update = AsyncMock()
+        gemini_mock.analyze_update.return_value = MagicMock(summary_html="<b>RU summary</b>", error=None)
+
+        settings_mock = MagicMock()
+        settings_mock.x_enabled = False
+        settings_mock.github_token = None
+
+        user_mock = MagicMock()
+        user_mock.language = "ru"
+
+        session_mock = MagicMock()
+        session_factory = MagicMock()
+        session_factory.return_value.__aenter__ = AsyncMock(return_value=session_mock)
+        session_factory.return_value.__aexit__ = AsyncMock(return_value=None)
+
+        service = PatchNotesService(
+            session_factory=session_factory,
+            telegram_channel=MagicMock(),
+            settings=settings_mock,
+            gemini_service=gemini_mock,
+        )
+
+        with unittest.mock.patch("app.repositories.user_repository.UserRepository.get_active_users", new_callable=AsyncMock) as mock_get_users:
+            mock_get_users.return_value = [user_mock]
+            with unittest.mock.patch.object(service, "_edit_messages", new_callable=AsyncMock):
+                with unittest.mock.patch.object(service, "_publish_to_x_if_needed", new_callable=AsyncMock):
+                    event = MagicMock(update_id="test-id", build_id="123")
+                    commit = MagicMock(filtered_diff="dummy diff", patch_version="1.0", commit_url="https://github.com", commit_sha="abc")
+                    await service._process_and_edit_final(
+                        event=event,
+                        news_item=None,
+                        datamine_commit=commit,
+                    )
+
+        # Gemini should be called once (for Russian), NOT for English
+        self.assertEqual(gemini_mock.analyze_update.call_count, 1)
+        args, kwargs = gemini_mock.analyze_update.call_args
+        self.assertEqual(kwargs.get("language"), "ru")
+
+    async def test_calls_english_when_english_user_present(self):
+        from unittest.mock import AsyncMock, MagicMock
+        from app.services.patch_notes_service import PatchNotesService
+
+        gemini_mock = MagicMock()
+        gemini_mock.is_available = True
+        gemini_mock.analyze_update = AsyncMock()
+        gemini_mock.analyze_update.return_value = MagicMock(summary_html="<b>Summary</b>", error=None)
+
+        settings_mock = MagicMock()
+        settings_mock.x_enabled = False
+        settings_mock.github_token = None
+
+        user_mock = MagicMock()
+        user_mock.language = "en"
+
+        session_mock = MagicMock()
+        session_factory = MagicMock()
+        session_factory.return_value.__aenter__ = AsyncMock(return_value=session_mock)
+        session_factory.return_value.__aexit__ = AsyncMock(return_value=None)
+
+        service = PatchNotesService(
+            session_factory=session_factory,
+            telegram_channel=MagicMock(),
+            settings=settings_mock,
+            gemini_service=gemini_mock,
+        )
+
+        with unittest.mock.patch("app.repositories.user_repository.UserRepository.get_active_users", new_callable=AsyncMock) as mock_get_users:
+            mock_get_users.return_value = [user_mock]
+            with unittest.mock.patch.object(service, "_edit_messages", new_callable=AsyncMock):
+                with unittest.mock.patch.object(service, "_publish_to_x_if_needed", new_callable=AsyncMock):
+                    event = MagicMock(update_id="test-id", build_id="123")
+                    commit = MagicMock(filtered_diff="dummy diff", patch_version="1.0", commit_url="https://github.com", commit_sha="abc")
+                    await service._process_and_edit_final(
+                        event=event,
+                        news_item=None,
+                        datamine_commit=commit,
+                    )
+
+        # Gemini should be called twice: once for ru, once for en
+        self.assertEqual(gemini_mock.analyze_update.call_count, 2)
+        call_languages = [c.kwargs.get("language") for c in gemini_mock.analyze_update.call_args_list]
+        self.assertIn("ru", call_languages)
+        self.assertIn("en", call_languages)
 
 
 if __name__ == "__main__":

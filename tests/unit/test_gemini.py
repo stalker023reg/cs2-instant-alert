@@ -63,9 +63,9 @@ class TestGeminiAnalysisService:
 
     def test_sanitize_telegram_html_truncates_long_text(self) -> None:
         service = GeminiAnalysisService(api_key=None)
-        long_text = "A" * 3000
+        long_text = "A" * 4500
         cleaned = service._sanitize_telegram_html(long_text)
-        assert len(cleaned) < 2600
+        assert len(cleaned) < 3900
         assert "<i>…продолжение по ссылке</i>" in cleaned
 
     def test_build_depot_context_empty(self) -> None:

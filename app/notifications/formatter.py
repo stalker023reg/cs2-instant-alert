@@ -82,11 +82,13 @@ class TelegramFormatter:
 
             if patch_url:
                 lines.append("")
-                if "github.com" in patch_url:
-                    link_text = "View file changes on GitHub" if is_en else "Изменения файлов на GitHub"
-                else:
-                    link_text = "Official Steam Announcement" if is_en else "Официальный пост в Steam"
-                lines.append(f'🌐 <a href="{patch_url}">{link_text}</a>')
+                steam_link = (
+                    "https://store.steampowered.com/news/app/730"
+                    if "github.com" in patch_url
+                    else patch_url
+                )
+                link_text = "Official Steam Announcement" if is_en else "Официальный пост в Steam"
+                lines.append(f'🌐 <a href="{steam_link}">{link_text}</a>')
         elif is_timeout:
             lines.append("")
             if is_en:

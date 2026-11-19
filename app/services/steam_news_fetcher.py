@@ -50,7 +50,7 @@ class SteamNewsFetcher:
         Returns:
             SteamNewsItem if a relevant announcement is found, otherwise None.
         """
-        url = f"https://api.steampowered.com/ISteamNews/GetNewsForApp/v2/?appid={CS2_APP_ID}&count=5"
+        url = f"https://api.steampowered.com/ISteamNews/GetNewsForApp/v2/?appid={CS2_APP_ID}&count=15"
 
         try:
             async with httpx.AsyncClient(timeout=self.timeout_seconds) as client:

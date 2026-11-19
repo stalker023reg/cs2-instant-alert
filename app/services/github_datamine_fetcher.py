@@ -20,23 +20,34 @@ from app.core.logging import get_logger
 logger = get_logger("system")
 
 # Priority groups for file pattern filtering
-# Patterns in lower index have higher inclusion priority
+# Covers all game files: balance, configs, items, localization, particles, sounds, maps, UI, animations
 PRIORITY_PATTERNS: list[tuple[str, re.Pattern]] = [
+    # 1. Gameplay, balance, convars, and configs
     ("convars", re.compile(r"^DumpSource2/(convars|commands)\.txt$", re.IGNORECASE)),
     ("configs", re.compile(r".*(cfg/.*(\.cfg|\.txt)|gameinfo\.gi)$", re.IGNORECASE)),
-    ("scripts", re.compile(r".*scripts/.*\.(txt|kv3)$", re.IGNORECASE)),
-    ("items", re.compile(r".*items/items_game.*\.txt$", re.IGNORECASE)),
-    ("scripting", re.compile(r".*\.d\.ts$", re.IGNORECASE)),
-    ("panorama", re.compile(r".*panorama/(styles|layout|scripts)/.*", re.IGNORECASE)),
+    ("items", re.compile(r".*(items/items_game.*\.txt|items_event.*\.js|items_game_cdn\.txt)$", re.IGNORECASE)),
     ("resource", re.compile(r".*resource/csgo_(english|russian)\.txt$", re.IGNORECASE)),
-    ("fgd", re.compile(r".*\.fgd$", re.IGNORECASE)),
+    ("scripts", re.compile(r".*(scripts/.*|vdata/.*|\.(txt|kv3|vdata|lua|py))$", re.IGNORECASE)),
+    
+    # 2. Visuals, Audio, Maps, UI and Animations
+    ("particles", re.compile(r".*(particles/.*|\.vpcf.*)", re.IGNORECASE)),
+    ("soundevents", re.compile(r".*(soundevents/.*|soundstacks/.*|\.vsndevts|\.vsndstck)", re.IGNORECASE)),
+    ("maps", re.compile(r".*maps/.*", re.IGNORECASE)),
+    ("panorama", re.compile(r".*panorama/.*", re.IGNORECASE)),
+    ("physics", re.compile(r".*(\.vphys.*|physics/.*)", re.IGNORECASE)),
+    ("animations", re.compile(r".*(anims/.*|animation/.*|\.vnmclip|\.vanim|\.vnmgraph)", re.IGNORECASE)),
+    ("models_materials", re.compile(r".*(models/.*|materials/.*|\.vmdl|\.vmat|\.vtex)", re.IGNORECASE)),
+
+    # 3. Technical, dev tools, schemas
+    ("scripting", re.compile(r".*\.d\.ts$", re.IGNORECASE)),
     ("schemas", re.compile(r"^DumpSource2/schemas/.*\.h$", re.IGNORECASE)),
-    ("vdata", re.compile(r".*scripts/.*\.vdata$", re.IGNORECASE)),
-    ("asset_info", re.compile(r".*readonly_tools_asset_info\.txt$", re.IGNORECASE)),
-    ("soundstacks", re.compile(r".*soundstacks/.*\.vsndstck$", re.IGNORECASE)),
+    ("fgd", re.compile(r".*\.fgd$", re.IGNORECASE)),
     ("strings", re.compile(r".*_strings\.txt$", re.IGNORECASE)),
-    ("soundevents", re.compile(r".*soundevents/.*\.vsndevts$", re.IGNORECASE)),
     ("protobufs", re.compile(r"^Protobufs/.*", re.IGNORECASE)),
+    ("asset_info", re.compile(r".*readonly_tools_asset_info\.txt$", re.IGNORECASE)),
+    
+    # 4. Catch-all: ANY other modified game file inside game/content/DumpSource2/Protobufs is NEVER dropped!
+    ("other_game_files", re.compile(r"^(game/|content/|DumpSource2/|Protobufs/).*", re.IGNORECASE)),
 ]
 
 
@@ -64,7 +75,7 @@ class GitHubDatamineFetcher:
         self,
         github_token: str | None = None,
         timeout_seconds: float = 15.0,
-        max_diff_chars: int = 45000,
+        max_diff_chars: int = 750000,
     ) -> None:
         if github_token is not None and hasattr(github_token, "get_secret_value"):
             github_token = github_token.get_secret_value()
@@ -188,9 +199,9 @@ class GitHubDatamineFetcher:
     @staticmethod
     def _summarize_pak01_patch(patch: str) -> str:
         """
-        Produce a compact, high-signal summary of asset changes in pak01_dir.vpk.
-        Groups added/modified assets by category (animations, models, sounds, textures, scripts, maps)
-        and lists sample weapon/feature names so Gemini sees the exact scope without token bloat.
+        Produce a comprehensive, high-signal summary of asset changes in pak01_dir.vpk.
+        Categorizes: animations, particles/effects, sounds/music, maps/collisions,
+        models/textures, UI/Panorama images, scripts/configs, and lists exact notable asset paths.
         """
         from collections import Counter
 
@@ -202,9 +213,12 @@ class GitHubDatamineFetcher:
             return ""
 
         ext_counts: Counter[str] = Counter()
-        anim_weapons: set[str] = set()
-        map_names: set[str] = set()
-        notable_items: list[str] = []
+        anim_details: list[str] = []
+        particle_details: list[str] = []
+        sound_details: list[str] = []
+        map_details: list[str] = []
+        ui_details: list[str] = []
+        notable_assets: list[str] = []
 
         for line in added:
             path = line.split()[0] if line else ""
@@ -212,26 +226,68 @@ class GitHubDatamineFetcher:
                 continue
             ext = path.split(".")[-1].lower() if "." in path else ""
             ext_counts[ext] += 1
+            filename_only = path.split("/")[-1]
 
-            # Collect animation weapon details
-            if "animation" in path:
+            # 1. Animations (with exact weapon & clip name)
+            if ext in ("vnmclip_c", "vanim_c", "vnmgraph_c") or "animation" in path or "anims" in path:
+                # e.g. animation/anims/viewmodel/rifle/rifle_awp/reload_silent_awp.vnmclip_c
+                clip_clean = re.sub(r"\.(vnmclip_c|vanim_c|vnmgraph_c)$", "", filename_only)
+                # Find weapon prefix if available
                 parts = path.split("/")
+                weapon_name = ""
                 for p in parts:
-                    if any(p.startswith(prefix) for prefix in ["pistol_", "weapon_", "rifle_", "smg_", "knife_"]):
-                        w_name = re.sub(r"^(pistol_|weapon_|rifle_|smg_)", "", p)
-                        anim_weapons.add(w_name)
+                    if any(p.startswith(pr) for pr in ["pistol_", "weapon_", "rifle_", "smg_", "knife_"]):
+                        weapon_name = re.sub(r"^(pistol_|weapon_|rifle_|smg_)", "", p)
+                        break
+                label = f"{weapon_name}: {clip_clean}" if weapon_name else clip_clean
+                if label not in anim_details and len(anim_details) < 15:
+                    anim_details.append(label)
+                if path not in notable_assets and len(notable_assets) < 40:
+                    notable_assets.append(path)
 
-            # Collect map details
-            if "maps/" in path:
+            # 2. Particles & Visual Effects (molotov, smoke, snow, flame, etc.)
+            elif ext in ("vpcf_c", "vpcf") or "particles" in path:
+                part_name = re.sub(r"\.(vpcf_c|vpcf)$", "", filename_only)
+                if part_name not in particle_details and len(particle_details) < 15:
+                    particle_details.append(part_name)
+                if path not in notable_assets and len(notable_assets) < 40:
+                    notable_assets.append(path)
+
+            # 3. Sounds & Music (weapons, music kits, bomb, environment)
+            elif ext in ("vsnd_c", "vsndevts_c", "vsndstck_c") or "soundevents" in path or "sound" in path:
+                snd_name = re.sub(r"\.(vsnd_c|vsndevts_c|vsndstck_c)$", "", filename_only)
+                if snd_name not in sound_details and len(sound_details) < 15:
+                    sound_details.append(snd_name)
+                if path not in notable_assets and len(notable_assets) < 40:
+                    notable_assets.append(path)
+
+            # 4. Maps & Physics/Collisions
+            elif "maps/" in path or ext in ("vpk", "vphys_c"):
                 parts = path.split("/")
-                if len(parts) > 1 and parts[1].startswith("de_"):
-                    map_names.add(parts[1].split(".")[0])
+                m_label = filename_only
+                for p in parts:
+                    if p.startswith("de_") or p.startswith("cs_") or p.startswith("ar_"):
+                        m_label = p.split(".")[0]
+                        break
+                if ext == "vphys_c":
+                    m_label += " (коллизии/физика)"
+                if m_label not in map_details and len(map_details) < 10:
+                    map_details.append(m_label)
+                if path not in notable_assets and len(notable_assets) < 40:
+                    notable_assets.append(path)
 
-            # Collect notable texture/c4/item names
-            if any(keyword in path.lower() for keyword in ["c4", "bomb", "freeze", "chicken", "taser", "zeus", "retake", "defuse"]):
-                filename_only = path.split("/")[-1]
-                if filename_only not in notable_items and len(notable_items) < 8:
-                    notable_items.append(filename_only)
+            # 5. Panorama UI Images & Previews (map screenshots, store, icons, banners)
+            elif "panorama" in path and ext in ("png", "svg", "jpg", "jpeg", "webp"):
+                ui_clean = re.sub(r"\.(png|svg|jpg|jpeg|webp)$", "", filename_only)
+                if ui_clean not in ui_details and len(ui_details) < 15:
+                    ui_details.append(ui_clean)
+                if path not in notable_assets and len(notable_assets) < 40:
+                    notable_assets.append(path)
+
+            # 6. Other notable items (c4, bomb, freeze, taser, chicken)
+            elif any(kw in path.lower() for kw in ["c4", "bomb", "freeze", "chicken", "taser", "zeus", "retake", "defuse"]):
+                if path not in notable_assets and len(notable_assets) < 40:
+                    notable_assets.append(path)
 
         summary_lines = [
             "--- a/game/csgo/pak01_dir.txt (Сводка изменений в архиве игры pak01.vpk)",
@@ -245,13 +301,39 @@ class GitHubDatamineFetcher:
         if anim_count > 0 or graph_count > 0:
             anim_desc = f"# • Анимации: обновлено {anim_count} клипов анимаций"
             if graph_count > 0:
-                anim_desc += f" и {graph_count} граф анимаций"
-            if anim_weapons:
-                anim_desc += f" (оружие: {', '.join(sorted(list(anim_weapons))[:8])})"
+                anim_desc += f", {graph_count} граф анимаций"
+            if anim_details:
+                anim_desc += f" (действия: {', '.join(anim_details[:8])})"
             summary_lines.append(anim_desc)
 
+        # Particles & Effects
+        part_count = ext_counts.get("vpcf_c", 0) + ext_counts.get("vpcf", 0)
+        if part_count > 0 or particle_details:
+            part_desc = f"# • Частицы и визуальные эффекты: {part_count} файлов"
+            if particle_details:
+                part_desc += f" (эффекты: {', '.join(particle_details[:8])})"
+            summary_lines.append(part_desc)
+
+        # Sounds & Music
+        sound_count = ext_counts.get("vsnd_c", 0) + ext_counts.get("vsndevts_c", 0) + ext_counts.get("vsndstck_c", 0)
+        if sound_count > 0 or sound_details:
+            snd_desc = f"# • Звуки и аудио: {sound_count} звуковых файлов"
+            if sound_details:
+                snd_desc += f" (названия: {', '.join(sound_details[:8])})"
+            summary_lines.append(snd_desc)
+
+        # Maps & Collisions
+        map_count = ext_counts.get("vpk", 0) + ext_counts.get("vphys_c", 0)
+        if map_details or map_count > 0:
+            summary_lines.append(f"# • Карты и коллизии ({map_count} файлов): {', '.join(map_details[:8])}")
+
+        # Panorama UI Images & Previews
+        img_count = sum(ext_counts.get(e, 0) for e in ("png", "svg", "jpg", "jpeg", "webp"))
+        if img_count > 0 or ui_details:
+            summary_lines.append(f"# • Изображения интерфейса и превью карт ({img_count} файлов): {', '.join(ui_details[:8])}")
+
         # Models & Textures
-        model_count = ext_counts.get("vmdl_c", 0)
+        model_count = ext_counts.get("vmdl_c", 0) + ext_counts.get("vmdl", 0)
         tex_count = ext_counts.get("vtex_c", 0) + ext_counts.get("vmat_c", 0) + ext_counts.get("vcompmat_c", 0)
         if model_count > 0 or tex_count > 0:
             summary_lines.append(f"# • Модели и текстуры: {model_count} моделей, {tex_count} текстур/материалов")
@@ -261,13 +343,11 @@ class GitHubDatamineFetcher:
         if script_count > 0:
             summary_lines.append(f"# • Игровые скрипты и конфиги: {script_count} файлов в архиве")
 
-        # Maps
-        if map_names:
-            summary_lines.append(f"# • Карты: {', '.join(sorted(map_names))}")
-
-        # Notable items
-        if notable_items:
-            summary_lines.append(f"# • Ключевые обновлённые ассеты: {', '.join(notable_items)}")
+        # Explicit list of notable asset filepaths
+        if notable_assets:
+            summary_lines.append("# • Ключевые изменённые ассеты (первые 35 файлов):")
+            for asset in notable_assets[:35]:
+                summary_lines.append(f"#   - {asset}")
 
         return "\n".join(summary_lines) + "\n"
 
@@ -327,7 +407,7 @@ class GitHubDatamineFetcher:
                     matched_filenames.append(filename)
                     break
 
-        # 3. Assemble filtered diff up to self.max_diff_chars
+        # 3. Assemble filtered diff up to self.max_diff_chars (250k tokens budget)
         diff_chunks: list[str] = []
         current_len = 0
         has_relevant = False
@@ -337,43 +417,51 @@ class GitHubDatamineFetcher:
             current_len += len(pak01_summary)
             has_relevant = True
 
-        group_limits = {
-            "soundevents": 6,
-            "strings": 6,
-            "schemas": 4,
-            "fgd": 2,
-            "configs": 6,
-        }
+        # Cap single files to 120,000 chars so one runaway dump doesn't monopolize the 750k budget
+        single_file_max_chars = 120000
 
         for idx, group in enumerate(prioritized_files):
             group_name = PRIORITY_PATTERNS[idx][0]
-            limit = group_limits.get(group_name, len(group))
-            files_to_process = group[:limit]
-            skipped_count = len(group) - limit
 
-            for filename, patch in files_to_process:
+            for filename, patch in group:
                 has_relevant = True
                 chunk_header = f"--- a/{filename}\n+++ b/{filename}\n"
                 chunk_budget = self.max_diff_chars - current_len - len(chunk_header)
 
                 if chunk_budget <= 200:
-                    # Budget exhausted
                     break
 
-                if len(patch) > chunk_budget:
-                    # Truncate large single file diff
-                    truncated_patch = patch[:chunk_budget] + "\n... [diff truncated]"
-                    diff_chunks.append(chunk_header + truncated_patch)
-                    current_len += len(chunk_header) + len(truncated_patch)
-                    break
-                else:
-                    diff_chunks.append(chunk_header + patch)
-                    current_len += len(chunk_header) + len(patch)
+                # For localization files, highlight newly added strings (music kits, items, tournament labels)
+                loc_added_summary = ""
+                if "csgo_russian.txt" in filename or "csgo_english.txt" in filename:
+                    added_lines = [
+                        l[1:].strip()
+                        for l in patch.splitlines()
+                        if l.startswith("+") and not l.startswith("+++") and '"' in l
+                    ]
+                    if added_lines:
+                        loc_added_summary = (
+                            f"# [Выделенные новые строки локализации ({filename.split('/')[-1]})]:\n"
+                            + "\n".join(f"#  + {line}" for line in added_lines[:50])
+                            + "\n\n"
+                        )
 
-            if skipped_count > 0:
-                summary_line = f"# ... и ещё {skipped_count} аналогичных файлов {group_name}\n"
-                diff_chunks.append(summary_line)
-                current_len += len(summary_line)
+                patch_to_add = patch
+                if len(patch_to_add) > single_file_max_chars:
+                    patch_to_add = patch_to_add[:single_file_max_chars] + "\n... [diff truncated to 120k chars]"
+
+                if len(patch_to_add) > chunk_budget:
+                    patch_to_add = patch_to_add[:chunk_budget] + "\n... [diff truncated due to overall budget]"
+
+                full_chunk = chunk_header + loc_added_summary + patch_to_add
+                diff_chunks.append(full_chunk)
+                current_len += len(full_chunk)
+
+                if current_len >= self.max_diff_chars:
+                    break
+
+            if current_len >= self.max_diff_chars:
+                break
 
         assembled_diff = "\n\n".join(diff_chunks)
 
