@@ -116,8 +116,9 @@ class GeminiAnalysisService:
             # Call Gemini Flash with fallback across stable active models
             models_to_try = [self.model]
             for fallback_name in (
-                "gemini-3.6-flash",
                 "gemini-3.5-flash-lite",
+                "gemini-3.5-flash",
+                "gemini-3.6-flash",
                 "gemini-3.8-flash",
                 "gemini-flash-latest",
             ):
@@ -536,8 +537,9 @@ Output ONLY the tweets separated by ---:"""
         try:
             models_to_try = [self.model]
             for fallback_name in (
-                "gemini-3.6-flash",
                 "gemini-3.5-flash-lite",
+                "gemini-3.5-flash",
+                "gemini-3.6-flash",
                 "gemini-3.8-flash",
                 "gemini-flash-latest",
             ):

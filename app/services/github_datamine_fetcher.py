@@ -175,17 +175,33 @@ class GitHubDatamineFetcher:
                 detail_data = detail_resp.json()
                 files = detail_data.get("files", [])
 
-                # If steam.inf has no inline patch (common in large commits), fetch raw content directly
-                for f in files:
-                    if f.get("filename", "").endswith("steam.inf") and not f.get("patch"):
-                        raw_url = f.get("raw_url") or f"https://raw.githubusercontent.com/SteamTracking/GameTracking-CS2/{sha}/game/csgo/steam.inf"
-                        try:
-                            raw_resp = await client.get(raw_url, headers=self._get_headers(), follow_redirects=True)
-                            if raw_resp.status_code == 200:
-                                f["patch"] = raw_resp.text
-                        except Exception as e:
-                            await logger.awarning("steam_inf_raw_fetch_failed", error=str(e))
-                        break
+                # In GitHub API, commits with >300 files truncate the 'files' array.
+                # If steam.inf is not in the list, or is present without inline patch,
+                # fetch its raw content directly by commit SHA.
+                has_steam_inf = any(f.get("filename", "").endswith("steam.inf") for f in files)
+                if not has_steam_inf:
+                    raw_url = f"https://raw.githubusercontent.com/SteamTracking/GameTracking-CS2/{sha}/game/csgo/steam.inf"
+                    try:
+                        raw_resp = await client.get(raw_url, headers=self._get_headers(), follow_redirects=True)
+                        if raw_resp.status_code == 200:
+                            files.append({
+                                "filename": "game/csgo/steam.inf",
+                                "patch": raw_resp.text,
+                                "status": "modified",
+                            })
+                    except Exception as e:
+                        await logger.awarning("steam_inf_direct_fetch_failed", error=str(e))
+                else:
+                    for f in files:
+                        if f.get("filename", "").endswith("steam.inf") and not f.get("patch"):
+                            raw_url = f.get("raw_url") or f"https://raw.githubusercontent.com/SteamTracking/GameTracking-CS2/{sha}/game/csgo/steam.inf"
+                            try:
+                                raw_resp = await client.get(raw_url, headers=self._get_headers(), follow_redirects=True)
+                                if raw_resp.status_code == 200:
+                                    f["patch"] = raw_resp.text
+                            except Exception as e:
+                                await logger.awarning("steam_inf_raw_fetch_failed", error=str(e))
+                            break
 
                 return self._parse_commit_data(sha, commit_html_url, commit_dt, files)
 
