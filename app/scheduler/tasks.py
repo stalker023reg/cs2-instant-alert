@@ -19,6 +19,7 @@ from app.repositories.steam_state_repository import SteamStateRepository
 from app.services.update_service import UpdateService
 from app.steam.multi_source_monitor import MultiSourceMonitor
 from app.steam.race_mode import RaceModeController
+from app.steam.steamcmd_monitor import SteamCMDFallbackMonitor
 from app.steam.types import SteamSource
 
 logger = get_logger("system")
@@ -42,6 +43,8 @@ class MonitoringOrchestrator:
         self.settings = settings
         self._tasks: dict[uuid.UUID, asyncio.Task] = {}
         self._running = False
+        self._pics_fail_count: int = 0
+        self._steamcmd_fallback: SteamCMDFallbackMonitor | None = None
 
     async def start(self) -> None:
         """Start monitoring all active games."""
@@ -64,6 +67,9 @@ class MonitoringOrchestrator:
         if self._tasks:
             await asyncio.gather(*self._tasks.values(), return_exceptions=True)
             self._tasks.clear()
+        if self._steamcmd_fallback:
+            await self._steamcmd_fallback.close()
+            self._steamcmd_fallback = None
 
     async def start_monitoring_game(self, game: Game) -> None:
         """Start the background monitoring loop for a specific game."""
@@ -133,6 +139,31 @@ class MonitoringOrchestrator:
 
                     results = await self.monitor.check_app(game.steam_app_id, sources=sources)
 
+                    # ── PICS fallback: use SteamCMD public API when PICS is unavailable ──
+                    if SteamSource.PICS not in results:
+                        self._pics_fail_count += 1
+                        # Log sparingly: 1st, 10th, then every 100th failure
+                        if self._pics_fail_count in (1, 10) or self._pics_fail_count % 100 == 0:
+                            await logger.awarning(
+                                "pics_unavailable_using_steamcmd_fallback",
+                                consecutive_failures=self._pics_fail_count,
+                                game_id=str(game.id),
+                            )
+                        # Lazy-init the fallback monitor
+                        if self._steamcmd_fallback is None:
+                            self._steamcmd_fallback = SteamCMDFallbackMonitor()
+                        fallback_data = await self._steamcmd_fallback.get_app_data(game.steam_app_id)
+                        if fallback_data:
+                            results[SteamSource.PICS] = fallback_data
+                    else:
+                        if self._pics_fail_count > 0:
+                            await logger.ainfo(
+                                "pics_recovered",
+                                after_failures=self._pics_fail_count,
+                                game_id=str(game.id),
+                            )
+                        self._pics_fail_count = 0
+
                     # 3. Process data
                     if SteamSource.PICS in results:
                         async with self.session_factory() as session:
@@ -156,9 +187,8 @@ class MonitoringOrchestrator:
                             await session.commit()
                     else:
                         await logger.awarning(
-                            "monitoring_check_failed",
+                            "monitoring_all_sources_failed",
                             game_id=str(game.id),
-                            source=SteamSource.PICS,
                         )
 
                     # Wait for next interval

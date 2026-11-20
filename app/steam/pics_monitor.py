@@ -26,6 +26,7 @@ class PICSMonitor(SteamMonitor):
 
     def __init__(self, steam_client: AsyncSteamClient) -> None:
         self.client = steam_client
+        self._hidden_fail_count: int = 0
 
     @property
     def source_name(self) -> SteamSource:
@@ -57,8 +58,24 @@ class PICSMonitor(SteamMonitor):
 
         # Check if it's a completely empty/hidden response
         if "_missing_token" in app_data and len(app_data) <= 5: # just meta keys
-            await logger.awarning("pics_app_hidden_or_missing", app_id=app_id)
+            self._hidden_fail_count += 1
+            # Log sparingly: 1st, then every 500th to avoid log spam
+            if self._hidden_fail_count == 1 or self._hidden_fail_count % 500 == 0:
+                await logger.awarning(
+                    "pics_app_hidden_or_missing",
+                    app_id=app_id,
+                    consecutive=self._hidden_fail_count,
+                )
             return None
+
+        # PICS is working again — reset counter
+        if self._hidden_fail_count > 0:
+            await logger.ainfo(
+                "pics_app_access_restored",
+                app_id=app_id,
+                after_failures=self._hidden_fail_count,
+            )
+            self._hidden_fail_count = 0
 
         change_number = app_data.get("changenumber", app_data.get("_change_number"))
 
