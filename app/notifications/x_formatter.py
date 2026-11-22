@@ -47,7 +47,43 @@ def twitter_weighted_length(text: str) -> int:
 
 
 class XThreadFormatter:
-    """Formats CS2 update events into an organic X (Twitter) thread."""
+    """Formats CS2 update events into an organic X (Twitter) post or thread."""
+
+    @classmethod
+    def format_single_post(
+        cls,
+        event: UpdateDetectedEvent,
+        analysis_en: str,
+        patch_version: str | None = None,
+        timezone: str = "UTC",
+    ) -> str:
+        """
+        Format a single comprehensive long-form post for X (Twitter) Premium.
+        Includes version header, clean breakdown of changes, and a link-in-bio CTA.
+        No external URLs to protect organic algorithmic reach.
+        """
+        date_str = format_date(event.detected_at, timezone)
+        version_part = f"• {patch_version} " if patch_version else ""
+
+        header = (
+            f"🚨 CS2 Update {version_part}is LIVE!\n\n"
+            f"📅 Date: {date_str}\n"
+            f"📦 Build ID: {event.build_id}\n\n"
+        )
+
+        clean_body = clean_html(analysis_en)
+        if not clean_body:
+            clean_body = "⚙️ Technical binary update without gameplay, settings, or UI changes."
+
+        footer = (
+            "\n\n⚡ Instant alerts earlier than everyone else — link in bio!\n"
+            "#CS2 #CounterStrike2 #CS2Update"
+        )
+
+        full_post = f"{header}{clean_body}{footer}".strip()
+        if len(full_post) > 24000:
+            full_post = full_post[:23900] + "\n\n…(truncated)\n" + footer
+        return full_post
 
     @classmethod
     def format_thread(

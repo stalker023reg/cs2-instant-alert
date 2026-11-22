@@ -267,6 +267,32 @@ class TestXIntegration(unittest.IsolatedAsyncioTestCase):
             # Must be recognized as fully published
             self.assertTrue(await repo.is_x_thread_published(update_id))
 
+    def test_format_single_post_for_x_premium(self):
+        analysis = """🎯 <b>Key Highlights:</b>
+• <b>Cobblestone:</b> Fixed walkable ledges and empty skybox.
+• <b>Inferno:</b> Closed grenade exploit from church to dark.
+
+🔎 <b>Game File Discoveries:</b>
+• <b>AWP:</b> Added silent reload animation."""
+
+        post = XThreadFormatter.format_single_post(
+            event=self.event,
+            analysis_en=analysis,
+            patch_version="1.42.0.0",
+        )
+
+        self.assertIn("🚨 CS2 Update • 1.42.0.0 is LIVE!", post)
+        self.assertIn("Build ID: 26598758", post)
+        self.assertIn("🎯 Key Highlights:", post)
+        self.assertIn("• Cobblestone: Fixed walkable ledges and empty skybox.", post)
+        self.assertIn("• Inferno: Closed grenade exploit from church to dark.", post)
+        self.assertIn("🔎 Game File Discoveries:", post)
+        self.assertIn("• AWP: Added silent reload animation.", post)
+        self.assertIn("link in bio", post.lower())
+        self.assertNotIn("https://", post)  # No raw external links in body
+        self.assertIn("#CS2", post)
+        self.assertIn("#CS2Update", post)
+
 
 if __name__ == "__main__":
     unittest.main()

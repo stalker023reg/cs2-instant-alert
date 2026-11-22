@@ -472,51 +472,19 @@ class PatchNotesService:
 
             banner_path = Path(__file__).resolve().parent.parent / "static" / "banner.jpg"
 
-            curated_tweets: list[str] = []
-            if self.gemini and en_text:
-                try:
-                    curated_tweets = await self.gemini.generate_x_thread(
-                        analysis_en=en_text,
-                        patch_version=patch_version,
-                    )
-                except Exception as gemini_x_err:
-                    await logger.awarning("gemini_x_thread_curation_failed", error=str(gemini_x_err))
-
-            thread = XThreadFormatter.format_thread(
+            # Format as single comprehensive post for X Premium
+            single_post = XThreadFormatter.format_single_post(
                 event=event,
                 analysis_en=en_text,
                 patch_version=patch_version,
-                patch_url=None,
-                telegram_channel_url=getattr(self.settings, "telegram_english_group_url", "https://t.me/cs2_alarm"),
-                curated_tweets=curated_tweets,
             )
+            thread = [single_post]
 
-            # Check if we are resuming a previously interrupted/partial thread
-            already_posted_ids: list[str] = []
-            if x_info and x_info.get("status") == "partial":
-                already_posted_ids = x_info.get("tweet_ids") or []
-
-            if already_posted_ids and len(already_posted_ids) < len(thread):
-                last_tweet_id = already_posted_ids[-1]
-                remaining_thread = thread[len(already_posted_ids):]
-                await logger.ainfo(
-                    "x_publish_resuming_partial_thread",
-                    update_id=str(event.update_id),
-                    already_posted_count=len(already_posted_ids),
-                    remaining_count=len(remaining_thread),
-                    reply_to_tweet_id=last_tweet_id,
-                )
-                new_tweet_ids = await self.x_publisher.publish_thread(
-                    remaining_thread,
-                    reply_to_tweet_id=last_tweet_id,
-                )
-                all_posted_ids = already_posted_ids + new_tweet_ids
-            else:
-                new_tweet_ids = await self.x_publisher.publish_thread(
-                    thread,
-                    banner_path=banner_path,
-                )
-                all_posted_ids = new_tweet_ids
+            new_tweet_ids = await self.x_publisher.publish_thread(
+                thread,
+                banner_path=banner_path,
+            )
+            all_posted_ids = new_tweet_ids
 
             if all_posted_ids:
                 is_full = len(all_posted_ids) >= len(thread)
