@@ -3,7 +3,7 @@
 # ════════════════════════════════════════════════════════════════
 
 app = 'cs2-instant-alert'
-primary_region = 'ams'
+primary_region = 'fra'
 
 [build]
   dockerfile = 'Dockerfile'
