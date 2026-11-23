@@ -124,6 +124,35 @@ def _classify_list_item(text: str) -> str:
     return "▸"
 
 
+def close_unclosed_html_tags(text: str) -> str:
+    """
+    Ensure all opened Telegram HTML tags are properly closed in reverse order.
+    Allowed tags: b, i, u, s, code, pre, a, tg-spoiler.
+    Prevents Telegram API errors when text is sliced or truncated.
+    """
+    allowed_tags = {"b", "i", "u", "s", "code", "pre", "a", "tg-spoiler"}
+    tag_pattern = re.compile(r"<(/?)(\w[\w-]*)(?:\s[^>]*)?>")
+    stack: list[str] = []
+    for match in tag_pattern.finditer(text):
+        is_closing = bool(match.group(1))
+        tag_name = match.group(2).lower()
+        if tag_name not in allowed_tags:
+            continue
+        if not is_closing:
+            stack.append(tag_name)
+        else:
+            if tag_name in stack:
+                while stack:
+                    popped = stack.pop()
+                    if popped == tag_name:
+                        break
+
+    for tag_name in reversed(stack):
+        text += f"</{tag_name}>"
+
+    return text
+
+
 def format_steam_patchnotes_html(raw_text: str, max_length: int = 3500) -> str:
     """
     Convert Steam BB-code patch notes into clean Telegram HTML.
@@ -227,5 +256,5 @@ def format_steam_patchnotes_html(raw_text: str, max_length: int = 3500) -> str:
                 text = text[:max_length - 30]
         text += "\n\n<i>…продолжение по ссылке ниже</i>"
 
-    return text
+    return close_unclosed_html_tags(text)
 

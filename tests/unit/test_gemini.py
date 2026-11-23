@@ -63,10 +63,20 @@ class TestGeminiAnalysisService:
 
     def test_sanitize_telegram_html_truncates_long_text(self) -> None:
         service = GeminiAnalysisService(api_key=None)
-        long_text = "A" * 4500
+        long_text = "<b>" + "A" * 4500
         cleaned = service._sanitize_telegram_html(long_text)
         assert len(cleaned) < 3900
         assert "<i>…продолжение по ссылке</i>" in cleaned
+        # Must properly close the unclosed <b> tag
+        assert cleaned.endswith("</b>")
+
+    def test_sanitize_telegram_html_truncates_english_text(self) -> None:
+        service = GeminiAnalysisService(api_key=None)
+        long_text = "<i>" + "B" * 4500
+        cleaned = service._sanitize_telegram_html(long_text, language="en")
+        assert len(cleaned) < 3900
+        assert "<i>…continued via link</i>" in cleaned
+        assert cleaned.count("<i>") == cleaned.count("</i>")
 
     def test_build_depot_context_empty(self) -> None:
         service = GeminiAnalysisService(api_key=None)

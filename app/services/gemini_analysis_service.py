@@ -13,6 +13,7 @@ from typing import Any
 
 from app.core.logging import get_logger
 from app.utils.depot_filter import CS2_DEPOT_NAMES, filter_depots, format_depots_html
+from app.utils.formatting import close_unclosed_html_tags
 
 logger = get_logger("system")
 
@@ -163,7 +164,7 @@ class GeminiAnalysisService:
                 return self._fallback_analysis(raw_patch_notes, depot_diff_html, git_diff)
 
             ai_text = response.text.strip()
-            summary_html = self._sanitize_telegram_html(ai_text)
+            summary_html = self._sanitize_telegram_html(ai_text, language=language)
 
             usage = getattr(response, "usage_metadata", None)
             prompt_tokens = getattr(usage, "prompt_token_count", None) if usage else None
@@ -438,7 +439,7 @@ INPUT DATA:
 
     # ─── Output Sanitization ───
 
-    def _sanitize_telegram_html(self, text: str) -> str:
+    def _sanitize_telegram_html(self, text: str, language: str = "ru") -> str:
         """
         Clean AI output to ensure valid Telegram HTML.
         Telegram only supports: <b>, <i>, <u>, <s>, <code>, <pre>, <a>, <tg-spoiler>.
@@ -488,9 +489,14 @@ INPUT DATA:
                 text = text[:cut].rstrip()
             else:
                 text = text[:max_length]
-            text += "\n\n<i>…продолжение по ссылке</i>"
+            suffix = (
+                "\n\n<i>…continued via link</i>"
+                if (language or "").lower().startswith("en")
+                else "\n\n<i>…продолжение по ссылке</i>"
+            )
+            text += suffix
 
-        return text
+        return close_unclosed_html_tags(text)
 
     async def generate_x_thread(
         self,
