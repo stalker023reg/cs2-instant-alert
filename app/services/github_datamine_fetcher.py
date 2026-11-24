@@ -234,7 +234,18 @@ class GitHubDatamineFetcher:
         sound_details: list[str] = []
         map_details: list[str] = []
         ui_details: list[str] = []
-        notable_assets: list[str] = []
+        loc_details: list[str] = []
+        model_details: list[str] = []
+        notable_assets_by_cat: dict[str, list[str]] = {
+            "animations": [],
+            "models": [],
+            "particles": [],
+            "sounds": [],
+            "maps": [],
+            "ui": [],
+            "localization": [],
+            "other": [],
+        }
 
         for line in added:
             path = line.split()[0] if line else ""
@@ -258,24 +269,24 @@ class GitHubDatamineFetcher:
                 label = f"{weapon_name}: {clip_clean}" if weapon_name else clip_clean
                 if label not in anim_details and len(anim_details) < 15:
                     anim_details.append(label)
-                if path not in notable_assets and len(notable_assets) < 40:
-                    notable_assets.append(path)
+                if path not in notable_assets_by_cat["animations"] and len(notable_assets_by_cat["animations"]) < 8:
+                    notable_assets_by_cat["animations"].append(path)
 
             # 2. Particles & Visual Effects (molotov, smoke, snow, flame, etc.)
             elif ext in ("vpcf_c", "vpcf") or "particles" in path:
                 part_name = re.sub(r"\.(vpcf_c|vpcf)$", "", filename_only)
                 if part_name not in particle_details and len(particle_details) < 15:
                     particle_details.append(part_name)
-                if path not in notable_assets and len(notable_assets) < 40:
-                    notable_assets.append(path)
+                if path not in notable_assets_by_cat["particles"] and len(notable_assets_by_cat["particles"]) < 6:
+                    notable_assets_by_cat["particles"].append(path)
 
             # 3. Sounds & Music (weapons, music kits, bomb, environment)
             elif ext in ("vsnd_c", "vsndevts_c", "vsndstck_c") or "soundevents" in path or "sound" in path:
                 snd_name = re.sub(r"\.(vsnd_c|vsndevts_c|vsndstck_c)$", "", filename_only)
                 if snd_name not in sound_details and len(sound_details) < 15:
                     sound_details.append(snd_name)
-                if path not in notable_assets and len(notable_assets) < 40:
-                    notable_assets.append(path)
+                if path not in notable_assets_by_cat["sounds"] and len(notable_assets_by_cat["sounds"]) < 6:
+                    notable_assets_by_cat["sounds"].append(path)
 
             # 4. Maps & Physics/Collisions
             elif "maps/" in path or ext in ("vpk", "vphys_c"):
@@ -289,21 +300,39 @@ class GitHubDatamineFetcher:
                     m_label += " (коллизии/физика)"
                 if m_label not in map_details and len(map_details) < 10:
                     map_details.append(m_label)
-                if path not in notable_assets and len(notable_assets) < 40:
-                    notable_assets.append(path)
+                if path not in notable_assets_by_cat["maps"] and len(notable_assets_by_cat["maps"]) < 8:
+                    notable_assets_by_cat["maps"].append(path)
 
             # 5. Panorama UI Images & Previews (map screenshots, store, icons, banners)
             elif "panorama" in path and ext in ("png", "svg", "jpg", "jpeg", "webp"):
                 ui_clean = re.sub(r"\.(png|svg|jpg|jpeg|webp)$", "", filename_only)
                 if ui_clean not in ui_details and len(ui_details) < 15:
                     ui_details.append(ui_clean)
-                if path not in notable_assets and len(notable_assets) < 40:
-                    notable_assets.append(path)
+                if path not in notable_assets_by_cat["ui"] and len(notable_assets_by_cat["ui"]) < 6:
+                    notable_assets_by_cat["ui"].append(path)
 
-            # 6. Other notable items (c4, bomb, freeze, taser, chicken)
+            # 6. Localization files (resource/csgo_*.txt)
+            elif "resource/csgo_" in path or ("resource/" in path and ext == "txt"):
+                lang_match = re.search(r"csgo_([a-zA-Z0-9_]+)\.txt", filename_only)
+                lang_name = lang_match.group(1) if lang_match else filename_only
+                if lang_name not in loc_details and len(loc_details) < 25:
+                    loc_details.append(lang_name)
+                if path not in notable_assets_by_cat["localization"] and len(notable_assets_by_cat["localization"]) < 8:
+                    notable_assets_by_cat["localization"].append(path)
+
+            # 7. Models, Materials & Props (de_cbble doors, props, trims, weapons)
+            elif ext in ("vmdl_c", "vmdl", "vmat_c", "vsmart_c", "vtex_c") or "models/" in path or "materials/" in path:
+                clean_name = re.sub(r"\.(vmdl_c|vmdl|vmat_c|vsmart_c|vtex_c)$", "", filename_only)
+                if any(kw in path.lower() for kw in ["cbble", "inferno", "nuke", "dust", "mirage", "anubis", "vertigo", "overpass", "door", "trim", "window", "pillar", "gate", "wall", "bomb", "c4", "weapon", "arms", "glove"]):
+                    if clean_name not in model_details and len(model_details) < 15:
+                        model_details.append(clean_name)
+                    if path not in notable_assets_by_cat["models"] and len(notable_assets_by_cat["models"]) < 10:
+                        notable_assets_by_cat["models"].append(path)
+
+            # 8. Other notable items (c4, bomb, freeze, taser, chicken)
             elif any(kw in path.lower() for kw in ["c4", "bomb", "freeze", "chicken", "taser", "zeus", "retake", "defuse"]):
-                if path not in notable_assets and len(notable_assets) < 40:
-                    notable_assets.append(path)
+                if path not in notable_assets_by_cat["other"] and len(notable_assets_by_cat["other"]) < 6:
+                    notable_assets_by_cat["other"].append(path)
 
         summary_lines = [
             "--- a/game/csgo/pak01_dir.txt (Сводка изменений в архиве игры pak01.vpk)",
@@ -352,17 +381,30 @@ class GitHubDatamineFetcher:
         model_count = ext_counts.get("vmdl_c", 0) + ext_counts.get("vmdl", 0)
         tex_count = ext_counts.get("vtex_c", 0) + ext_counts.get("vmat_c", 0) + ext_counts.get("vcompmat_c", 0)
         if model_count > 0 or tex_count > 0:
-            summary_lines.append(f"# • Модели и текстуры: {model_count} моделей, {tex_count} текстур/материалов")
+            m_desc = f"# • Модели и текстуры: {model_count} моделей, {tex_count} текстур/материалов"
+            if model_details:
+                m_desc += f" (ключевые объекты: {', '.join(model_details[:10])})"
+            summary_lines.append(m_desc)
+
+        # Localization & Language Strings
+        if loc_details:
+            summary_lines.append(
+                f"# • Локализация и языковые файлы ({len(loc_details)} языков): обновлены строки для {', '.join(loc_details[:15])}"
+            )
 
         # Scripts / Logic
         script_count = ext_counts.get("kv3", 0) + ext_counts.get("txt", 0) + ext_counts.get("vdata", 0)
         if script_count > 0:
             summary_lines.append(f"# • Игровые скрипты и конфиги: {script_count} файлов в архиве")
 
-        # Explicit list of notable asset filepaths
+        # Explicit list of notable asset filepaths (balanced across all categories)
+        notable_assets: list[str] = []
+        for cat in ("animations", "models", "maps", "localization", "ui", "particles", "sounds", "other"):
+            notable_assets.extend(notable_assets_by_cat[cat])
+
         if notable_assets:
-            summary_lines.append("# • Ключевые изменённые ассеты (первые 35 файлов):")
-            for asset in notable_assets[:35]:
+            summary_lines.append(f"# • Ключевые изменённые ассеты (первые {min(len(notable_assets), 45)} файлов):")
+            for asset in notable_assets[:45]:
                 summary_lines.append(f"#   - {asset}")
 
         return "\n".join(summary_lines) + "\n"

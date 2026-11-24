@@ -113,3 +113,100 @@ class TestMultiSourceMonitor:
         pics.get_app_data.assert_awaited_once_with(730)
         webapi.get_app_data.assert_awaited_once_with(730)
         store.get_app_data.assert_awaited_once_with(730)
+
+
+@pytest.mark.asyncio
+class TestSteamNewsFetcher:
+    async def test_webapi_with_cache_busting_success(self, mocker: MagicMock) -> None:
+        from app.services.steam_news_fetcher import SteamNewsFetcher
+
+        fetcher = SteamNewsFetcher()
+        detected_at = datetime(2026, 11, 23, 23, 0, 0, tzinfo=timezone.utc)
+
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.json.return_value = {
+            "appnews": {
+                "newsitems": [
+                    {
+                        "gid": "1849827110444052",
+                        "title": "Counter-Strike 2 Update",
+                        "feedname": "steam_community_announcements",
+                        "tags": ["patchnotes"],
+                        "date": int(detected_at.timestamp()) + 120,
+                        "contents": "[p]Cobblestone updates[/p]",
+                    }
+                ]
+            }
+        }
+
+        mock_get = AsyncMock(return_value=mock_resp)
+        mocker.patch("httpx.AsyncClient.get", mock_get)
+
+        item = await fetcher.fetch_latest_patchnotes(detected_at)
+        assert item is not None
+        assert item.gid == "1849827110444052"
+        assert item.title == "Counter-Strike 2 Update"
+        assert "[p]Cobblestone updates[/p]" in item.contents
+
+        # Verify cache busting query parameter and no-cache headers were sent
+        called_url, called_kwargs = mock_get.call_args[0][0], mock_get.call_args[1]
+        assert "_cb=" in called_url
+        headers = called_kwargs.get("headers", {})
+        assert headers.get("Cache-Control") == "no-cache, no-store, must-revalidate"
+        assert headers.get("Pragma") == "no-cache"
+
+    async def test_rss_fallback_when_webapi_is_stale(self, mocker: MagicMock) -> None:
+        from app.services.steam_news_fetcher import SteamNewsFetcher
+
+        fetcher = SteamNewsFetcher()
+        detected_at = datetime(2026, 11, 23, 23, 0, 0, tzinfo=timezone.utc)
+
+        # 1st call (WebAPI): Stale response with old announcement from 10 hours ago
+        mock_webapi_resp = MagicMock()
+        mock_webapi_resp.status_code = 200
+        mock_webapi_resp.json.return_value = {
+            "appnews": {
+                "newsitems": [
+                    {
+                        "gid": "old_post",
+                        "title": "Old Post",
+                        "feedname": "steam_community_announcements",
+                        "date": int(detected_at.timestamp()) - 36000,
+                        "contents": "old",
+                    }
+                ]
+            }
+        }
+
+        # 2nd call (RSS): Fresh announcement from 2 minutes after detection
+        mock_rss_resp = MagicMock()
+        mock_rss_resp.status_code = 200
+        mock_rss_resp.text = """<?xml version="1.0" encoding="utf-8"?>
+<rss version="2.0">
+  <channel>
+    <title>Counter-Strike 2 News</title>
+    <item>
+      <title>Counter-Strike 2 Update</title>
+      <description>&lt;p&gt;Cobblestone fixes&lt;/p&gt;</description>
+      <link>https://store.steampowered.com/news/app/730/view/694278269818635488</link>
+      <pubDate>Mon, 23 Nov 2026 23:02:07 +0000</pubDate>
+      <guid isPermaLink="true">https://store.steampowered.com/news/app/730/view/694278269818635488</guid>
+    </item>
+  </channel>
+</rss>"""
+
+        async def fake_get(url: str, **kwargs):
+            if "ISteamNews" in url:
+                return mock_webapi_resp
+            return mock_rss_resp
+
+        mocker.patch("httpx.AsyncClient.get", side_effect=fake_get)
+
+        item = await fetcher.fetch_latest_patchnotes(detected_at)
+        assert item is not None
+        assert item.gid == "694278269818635488"
+        assert item.title == "Counter-Strike 2 Update"
+        assert "<p>Cobblestone fixes</p>" in item.contents
+        assert item.url == "https://store.steampowered.com/news/app/730/view/694278269818635488"
+

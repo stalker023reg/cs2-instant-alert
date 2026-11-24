@@ -251,7 +251,10 @@ CORE RULES:
 
 4. DATAMINED FINDINGS ("Game File Discoveries"):
    - Put all hidden changes in game resources that aren't mentioned in Valve's official text:
-     * Archive animations & assets (if pak01 summary or diff updates 3rd-person draw/reload animations — specify the count of animations, graphs, and affected weapons, e.g. 151 animations).
+     * Archive animations & assets (if pak01 summary or diff updates 3rd-person draw/reload animations — specify the count of animations, graphs, and affected weapons, e.g. 70 third-person silent reload animations).
+     * Map models & geometry (files in models/, materials/ — e.g. door models, door leaves, frames, trims for maps like de_cbble).
+     * Panorama UI & Styles (files in panorama/styles/, panorama/images/ — e.g. margin/padding tweaks like stream feed panel in mainmenu_stream.css, map screenshot icons in menu).
+     * Localization & translations (files in resource/csgo_*.txt or pak01 localization summary — e.g. tournament sticker pricing translated into 15+ languages, changed menu headings in Russian/English).
      * Bot behavior & tactics (if scripts/ai/ or .kv3 files update bot logic for Retakes — describe the new tactics: CT defuse/push, T hide around bomb).
      * Engine configs & netcode (e.g. in gameinfo.gi — explain: server spam protection, parallel interpolation).
      * Graphics & physics (e.g. Parallax Occlusion Mapping, frost/weapon heat mechanics).
@@ -353,10 +356,12 @@ INPUT DATA:
 4. НАХОДКИ ИЗ ДАТАМАЙНА («Не вошло в патчноут» / «Находки в файлах игры»):
    - Помещай сюда все скрытые изменения в ресурсах игры, которых нет в официальном тексте Valve:
      * Частицы и визуальные эффекты (файлы .vpcf_c, particles/ — например, реакция огня молотова под дымом, таяние снега, закалка металлов, эффекты взрывов).
-     * Анимации оружия и персонажей (файлы .vnmclip_c, animation/ — обязательно указывай точное действие оружия, например «медленная/тихая перезарядка AWP reload_silent_awp», осмотр, доставание).
+     * Анимации оружия и персонажей (файлы .vnmclip_c, animation/ — обязательно указывай точное действие оружия, количество анимаций, например «70 тихих перезарядок от третьего лица для пистолетов и винтовок»).
+     * Модели и геометрия карт (файлы models/, materials/ — новые модели дверей, створки, окантовки, бордюры для карт вроде de_cbble).
+     * Превью и интерфейс Panorama (файлы panorama/styles/, panorama/images/ — например, отступы в блоке стримов mainmenu_stream.css, скриншоты карт в меню выбора de_cbble).
+     * Локализация и переводы (csgo_russian.txt, другие языки в pak01 — перевод цен наклеек турнирного магазина на 15+ языков, обновление заголовков меню).
      * Звуки и музыкальные наборы (.vsnd_c, soundevents/ — новые наборы музыки Monstercat, звуки шагов, рикошеты).
-     * Новые предметы, магазин и турниры (из items_game, items_event_store.js, csgo_russian.txt — сортировка команд по посеву в магазине, новые наклейки, пропуск зрителя, монеты).
-     * Превью и интерфейс (файлы panorama/images/ — например, новые скриншоты/превью карт de_cbble, de_inferno в меню выбора).
+     * Новые предметы, магазин и турниры (из items_game, items_event_store.js — новые наклейки, пропуск зрителя, монеты).
      * Конфиги режимов и правила (например, сокращение времени разминки с 90 до 60 секунд, условия старта раунда).
      * Поведение и тактика ботов (в scripts/ai/ — тактика в Retakes, обезвреживание C4).
      * Сетевые настройки и движок (gameinfo.gi, convars).
