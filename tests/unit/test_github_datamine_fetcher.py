@@ -97,3 +97,65 @@ class TestGitHubDatamineFetcherBlindSpots:
         assert "r_csgo_parallax 1" in res.filtered_diff
         assert res.has_relevant_changes is True
 
+    @pytest.mark.asyncio
+    async def test_fetch_commit_diff_large_commit_fallback(self, monkeypatch):
+        """When files count >= 300, fetcher should request raw diff and parse all files."""
+        fetcher = GitHubDatamineFetcher()
+
+        mock_commits_list = [
+            {
+                "sha": "sha_large",
+                "html_url": "http://dummy",
+                "commit": {"committer": {"date": datetime.now(UTC).isoformat()}},
+            }
+        ]
+        # Mock initial detail resp with 300 files (missing steam.inf)
+        mock_300_files = [{"filename": f"DumpSource2/schemas/file_{i}.h"} for i in range(300)]
+
+        raw_diff_text = """diff --git a/DumpSource2/schemas/file_0.h b/DumpSource2/schemas/file_0.h
+--- a/DumpSource2/schemas/file_0.h
++++ b/DumpSource2/schemas/file_0.h
+@@ -1 +1 @@
++class Test;
+diff --git a/game/csgo/steam.inf b/game/csgo/steam.inf
+--- a/game/csgo/steam.inf
++++ b/game/csgo/steam.inf
+@@ -1 +1 @@
++PatchVersion=1.42.0.1
++ClientVersion=2000950
++ServerVersion=2000950
+"""
+
+        class MockResponse:
+            def __init__(self, json_data=None, text="", status_code=200):
+                self._json = json_data
+                self.text = text
+                self.status_code = status_code
+
+            def json(self):
+                return self._json
+
+            def raise_for_status(self):
+                pass
+
+        call_count = 0
+
+        async def mock_get(client_self, url, headers=None, timeout=None):
+            nonlocal call_count
+            call_count += 1
+            if headers and headers.get("Accept") == "application/vnd.github.v3.diff":
+                return MockResponse(text=raw_diff_text, status_code=200)
+            if "/commits?" in url:
+                return MockResponse(json_data=mock_commits_list, status_code=200)
+            return MockResponse(json_data={"files": mock_300_files}, status_code=200)
+
+        import httpx
+        monkeypatch.setattr(httpx.AsyncClient, "get", mock_get)
+
+        res = await fetcher.fetch_matching_commit(datetime.now(UTC), min_window_minutes_before=10)
+        assert res is not None
+        assert res.patch_version == "1.42.0.1"
+        assert res.client_version == "2000950"
+        assert call_count >= 3  # 1. list commits, 2. detail JSON, 3. raw diff
+
+

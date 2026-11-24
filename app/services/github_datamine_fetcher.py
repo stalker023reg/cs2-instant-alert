@@ -175,8 +175,38 @@ class GitHubDatamineFetcher:
                 detail_data = detail_resp.json()
                 files = detail_data.get("files", [])
 
-                # In GitHub API, commits with >300 files truncate the 'files' array.
-                # If steam.inf is not in the list, or is present without inline patch,
+                # In GitHub REST API, commits with >= 300 files truncate the 'files' array.
+                # When truncated, alphabetically later files (like game/csgo/pak01_dir.txt and game/csgo/steam.inf)
+                # are omitted from the JSON response. For large multi-gigabyte updates, fetch the full raw unified git diff!
+                if len(files) >= 300:
+                    try:
+                        diff_headers = self._get_headers()
+                        diff_headers["Accept"] = "application/vnd.github.v3.diff"
+                        diff_resp = await client.get(detail_url, headers=diff_headers)
+                        if diff_resp.status_code == 200 and diff_resp.text:
+                            parsed_files: list[dict[str, Any]] = []
+                            for chunk in diff_resp.text.split("diff --git a/")[1:]:
+                                lines = chunk.splitlines()
+                                if not lines:
+                                    continue
+                                fn = lines[0].split()[0]
+                                patch_body = "\n".join(lines[1:])
+                                parsed_files.append({
+                                    "filename": fn,
+                                    "patch": patch_body,
+                                    "status": "modified",
+                                })
+                            if parsed_files:
+                                files = parsed_files
+                                await logger.ainfo(
+                                    "github_large_commit_raw_diff_parsed",
+                                    sha=sha,
+                                    total_files=len(files),
+                                )
+                    except Exception as e:
+                        await logger.awarning("github_large_commit_raw_diff_failed", error=str(e))
+
+                # If steam.inf is still not in the list, or is present without inline patch,
                 # fetch its raw content directly by commit SHA.
                 has_steam_inf = any(f.get("filename", "").endswith("steam.inf") for f in files)
                 if not has_steam_inf:
