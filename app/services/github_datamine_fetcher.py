@@ -75,7 +75,7 @@ class GitHubDatamineFetcher:
         self,
         github_token: str | None = None,
         timeout_seconds: float = 15.0,
-        max_diff_chars: int = 750000,
+        max_diff_chars: int = 850000,
     ) -> None:
         if github_token is not None and hasattr(github_token, "get_secret_value"):
             github_token = github_token.get_secret_value()
@@ -267,25 +267,25 @@ class GitHubDatamineFetcher:
                         weapon_name = re.sub(r"^(pistol_|weapon_|rifle_|smg_)", "", p)
                         break
                 label = f"{weapon_name}: {clip_clean}" if weapon_name else clip_clean
-                if label not in anim_details and len(anim_details) < 15:
+                if label not in anim_details and len(anim_details) < 25:
                     anim_details.append(label)
-                if path not in notable_assets_by_cat["animations"] and len(notable_assets_by_cat["animations"]) < 8:
+                if path not in notable_assets_by_cat["animations"] and len(notable_assets_by_cat["animations"]) < 35:
                     notable_assets_by_cat["animations"].append(path)
 
             # 2. Particles & Visual Effects (molotov, smoke, snow, flame, etc.)
             elif ext in ("vpcf_c", "vpcf") or "particles" in path:
                 part_name = re.sub(r"\.(vpcf_c|vpcf)$", "", filename_only)
-                if part_name not in particle_details and len(particle_details) < 15:
+                if part_name not in particle_details and len(particle_details) < 25:
                     particle_details.append(part_name)
-                if path not in notable_assets_by_cat["particles"] and len(notable_assets_by_cat["particles"]) < 6:
+                if path not in notable_assets_by_cat["particles"] and len(notable_assets_by_cat["particles"]) < 25:
                     notable_assets_by_cat["particles"].append(path)
 
             # 3. Sounds & Music (weapons, music kits, bomb, environment)
             elif ext in ("vsnd_c", "vsndevts_c", "vsndstck_c") or "soundevents" in path or "sound" in path:
                 snd_name = re.sub(r"\.(vsnd_c|vsndevts_c|vsndstck_c)$", "", filename_only)
-                if snd_name not in sound_details and len(sound_details) < 15:
+                if snd_name not in sound_details and len(sound_details) < 25:
                     sound_details.append(snd_name)
-                if path not in notable_assets_by_cat["sounds"] and len(notable_assets_by_cat["sounds"]) < 6:
+                if path not in notable_assets_by_cat["sounds"] and len(notable_assets_by_cat["sounds"]) < 35:
                     notable_assets_by_cat["sounds"].append(path)
 
             # 4. Maps & Physics/Collisions
@@ -298,40 +298,40 @@ class GitHubDatamineFetcher:
                         break
                 if ext == "vphys_c":
                     m_label += " (коллизии/физика)"
-                if m_label not in map_details and len(map_details) < 10:
+                if m_label not in map_details and len(map_details) < 25:
                     map_details.append(m_label)
-                if path not in notable_assets_by_cat["maps"] and len(notable_assets_by_cat["maps"]) < 8:
+                if path not in notable_assets_by_cat["maps"] and len(notable_assets_by_cat["maps"]) < 30:
                     notable_assets_by_cat["maps"].append(path)
 
             # 5. Panorama UI Images & Previews (map screenshots, store, icons, banners)
             elif "panorama" in path and ext in ("png", "svg", "jpg", "jpeg", "webp"):
                 ui_clean = re.sub(r"\.(png|svg|jpg|jpeg|webp)$", "", filename_only)
-                if ui_clean not in ui_details and len(ui_details) < 15:
+                if ui_clean not in ui_details and len(ui_details) < 25:
                     ui_details.append(ui_clean)
-                if path not in notable_assets_by_cat["ui"] and len(notable_assets_by_cat["ui"]) < 6:
+                if path not in notable_assets_by_cat["ui"] and len(notable_assets_by_cat["ui"]) < 35:
                     notable_assets_by_cat["ui"].append(path)
 
             # 6. Localization files (resource/csgo_*.txt)
             elif "resource/csgo_" in path or ("resource/" in path and ext == "txt"):
                 lang_match = re.search(r"csgo_([a-zA-Z0-9_]+)\.txt", filename_only)
                 lang_name = lang_match.group(1) if lang_match else filename_only
-                if lang_name not in loc_details and len(loc_details) < 25:
+                if lang_name not in loc_details and len(loc_details) < 35:
                     loc_details.append(lang_name)
-                if path not in notable_assets_by_cat["localization"] and len(notable_assets_by_cat["localization"]) < 8:
+                if path not in notable_assets_by_cat["localization"] and len(notable_assets_by_cat["localization"]) < 35:
                     notable_assets_by_cat["localization"].append(path)
 
             # 7. Models, Materials & Props (de_cbble doors, props, trims, weapons)
             elif ext in ("vmdl_c", "vmdl", "vmat_c", "vsmart_c", "vtex_c") or "models/" in path or "materials/" in path:
                 clean_name = re.sub(r"\.(vmdl_c|vmdl|vmat_c|vsmart_c|vtex_c)$", "", filename_only)
                 if any(kw in path.lower() for kw in ["cbble", "inferno", "nuke", "dust", "mirage", "anubis", "vertigo", "overpass", "door", "trim", "window", "pillar", "gate", "wall", "bomb", "c4", "weapon", "arms", "glove"]):
-                    if clean_name not in model_details and len(model_details) < 15:
+                    if clean_name not in model_details and len(model_details) < 40:
                         model_details.append(clean_name)
-                    if path not in notable_assets_by_cat["models"] and len(notable_assets_by_cat["models"]) < 10:
+                    if path not in notable_assets_by_cat["models"] and len(notable_assets_by_cat["models"]) < 80:
                         notable_assets_by_cat["models"].append(path)
 
             # 8. Other notable items (c4, bomb, freeze, taser, chicken)
             elif any(kw in path.lower() for kw in ["c4", "bomb", "freeze", "chicken", "taser", "zeus", "retake", "defuse"]):
-                if path not in notable_assets_by_cat["other"] and len(notable_assets_by_cat["other"]) < 6:
+                if path not in notable_assets_by_cat["other"] and len(notable_assets_by_cat["other"]) < 25:
                     notable_assets_by_cat["other"].append(path)
 
         summary_lines = [
@@ -348,7 +348,7 @@ class GitHubDatamineFetcher:
             if graph_count > 0:
                 anim_desc += f", {graph_count} граф анимаций"
             if anim_details:
-                anim_desc += f" (действия: {', '.join(anim_details[:8])})"
+                anim_desc += f" (действия: {', '.join(anim_details[:15])})"
             summary_lines.append(anim_desc)
 
         # Particles & Effects
@@ -356,7 +356,7 @@ class GitHubDatamineFetcher:
         if part_count > 0 or particle_details:
             part_desc = f"# • Частицы и визуальные эффекты: {part_count} файлов"
             if particle_details:
-                part_desc += f" (эффекты: {', '.join(particle_details[:8])})"
+                part_desc += f" (эффекты: {', '.join(particle_details[:15])})"
             summary_lines.append(part_desc)
 
         # Sounds & Music
@@ -364,18 +364,18 @@ class GitHubDatamineFetcher:
         if sound_count > 0 or sound_details:
             snd_desc = f"# • Звуки и аудио: {sound_count} звуковых файлов"
             if sound_details:
-                snd_desc += f" (названия: {', '.join(sound_details[:8])})"
+                snd_desc += f" (названия: {', '.join(sound_details[:15])})"
             summary_lines.append(snd_desc)
 
         # Maps & Collisions
         map_count = ext_counts.get("vpk", 0) + ext_counts.get("vphys_c", 0)
         if map_details or map_count > 0:
-            summary_lines.append(f"# • Карты и коллизии ({map_count} файлов): {', '.join(map_details[:8])}")
+            summary_lines.append(f"# • Карты и коллизии ({map_count} файлов): {', '.join(map_details[:15])}")
 
         # Panorama UI Images & Previews
         img_count = sum(ext_counts.get(e, 0) for e in ("png", "svg", "jpg", "jpeg", "webp"))
         if img_count > 0 or ui_details:
-            summary_lines.append(f"# • Изображения интерфейса и превью карт ({img_count} файлов): {', '.join(ui_details[:8])}")
+            summary_lines.append(f"# • Изображения интерфейса и превью карт ({img_count} файлов): {', '.join(ui_details[:15])}")
 
         # Models & Textures
         model_count = ext_counts.get("vmdl_c", 0) + ext_counts.get("vmdl", 0)
@@ -383,13 +383,13 @@ class GitHubDatamineFetcher:
         if model_count > 0 or tex_count > 0:
             m_desc = f"# • Модели и текстуры: {model_count} моделей, {tex_count} текстур/материалов"
             if model_details:
-                m_desc += f" (ключевые объекты: {', '.join(model_details[:10])})"
+                m_desc += f" (ключевые объекты: {', '.join(model_details[:20])})"
             summary_lines.append(m_desc)
 
         # Localization & Language Strings
         if loc_details:
             summary_lines.append(
-                f"# • Локализация и языковые файлы ({len(loc_details)} языков): обновлены строки для {', '.join(loc_details[:15])}"
+                f"# • Локализация и языковые файлы ({len(loc_details)} языков): обновлены строки для {', '.join(loc_details[:25])}"
             )
 
         # Scripts / Logic
@@ -403,8 +403,8 @@ class GitHubDatamineFetcher:
             notable_assets.extend(notable_assets_by_cat[cat])
 
         if notable_assets:
-            summary_lines.append(f"# • Ключевые изменённые ассеты (первые {min(len(notable_assets), 45)} файлов):")
-            for asset in notable_assets[:45]:
+            summary_lines.append(f"# • Ключевые изменённые ассеты (первые {min(len(notable_assets), 350)} файлов):")
+            for asset in notable_assets[:350]:
                 summary_lines.append(f"#   - {asset}")
 
         return "\n".join(summary_lines) + "\n"
@@ -475,8 +475,8 @@ class GitHubDatamineFetcher:
             current_len += len(pak01_summary)
             has_relevant = True
 
-        # Cap single files to 120,000 chars so one runaway dump doesn't monopolize the 750k budget
-        single_file_max_chars = 120000
+        # Cap single files to 160,000 chars so one runaway dump doesn't monopolize the 850k budget
+        single_file_max_chars = 160000
 
         for idx, group in enumerate(prioritized_files):
             group_name = PRIORITY_PATTERNS[idx][0]
@@ -500,13 +500,13 @@ class GitHubDatamineFetcher:
                     if added_lines:
                         loc_added_summary = (
                             f"# [Выделенные новые строки локализации ({filename.split('/')[-1]})]:\n"
-                            + "\n".join(f"#  + {line}" for line in added_lines[:50])
+                            + "\n".join(f"#  + {line}" for line in added_lines[:100])
                             + "\n\n"
                         )
 
                 patch_to_add = patch
                 if len(patch_to_add) > single_file_max_chars:
-                    patch_to_add = patch_to_add[:single_file_max_chars] + "\n... [diff truncated to 120k chars]"
+                    patch_to_add = patch_to_add[:single_file_max_chars] + "\n... [diff truncated to 160k chars]"
 
                 if len(patch_to_add) > chunk_budget:
                     patch_to_add = patch_to_add[:chunk_budget] + "\n... [diff truncated due to overall budget]"
