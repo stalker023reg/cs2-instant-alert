@@ -84,7 +84,10 @@ class SteamNewsFetcher:
     ) -> SteamNewsItem | None:
         """Fetch patch notes from ISteamNews/GetNewsForApp/v2 with cache busting."""
         cb = int(time.time())
-        url = f"https://api.steampowered.com/ISteamNews/GetNewsForApp/v2/?appid={CS2_APP_ID}&count=15&_cb={cb}"
+        url = (
+            f"https://api.steampowered.com/ISteamNews/GetNewsForApp/v2/"
+            f"?appid={CS2_APP_ID}&count=15&feeds=steam_community_announcements&_cb={cb}"
+        )
         headers = {
             "User-Agent": "CS2-Instant-Alert-Bot/1.0",
             "Cache-Control": "no-cache, no-store, must-revalidate",
@@ -111,12 +114,17 @@ class SteamNewsFetcher:
             if not (window_start <= item_date <= window_end):
                 continue
 
-            # Filter: official announcement / patchnotes
+            # Filter: official announcement / patchnotes (reject 3rd-party press feeds)
+            feed_type = item.get("feed_type")
+            is_external = (feed_type == 0) or (bool(feedname) and feedname != "steam_community_announcements")
             is_official = (
-                feedname == "steam_community_announcements"
-                or "patchnotes" in tags
-                or "release notes" in title.lower()
-                or "update" in title.lower()
+                not is_external
+                and (
+                    feedname == "steam_community_announcements"
+                    or "patchnotes" in tags
+                    or "release notes" in title.lower()
+                    or "counter-strike 2 update" in title.lower()
+                )
             )
 
             if not is_official:

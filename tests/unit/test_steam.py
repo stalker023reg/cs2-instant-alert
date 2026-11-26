@@ -210,3 +210,40 @@ class TestSteamNewsFetcher:
         assert "<p>Cobblestone fixes</p>" in item.contents
         assert item.url == "https://store.steampowered.com/news/app/730/view/694278269818635488"
 
+    async def test_external_news_with_update_in_title_is_rejected(self, mocker: MagicMock) -> None:
+        from app.services.steam_news_fetcher import SteamNewsFetcher
+
+        fetcher = SteamNewsFetcher()
+        detected_at = datetime(2026, 11, 23, 23, 0, 0, tzinfo=timezone.utc)
+
+        mock_webapi_resp = MagicMock()
+        mock_webapi_resp.status_code = 200
+        mock_webapi_resp.json.return_value = {
+            "appnews": {
+                "newsitems": [
+                    {
+                        "gid": "pcgamer_article",
+                        "title": "Massive CS2 update rumors from ESL",
+                        "feedname": "pcgamer",
+                        "feed_type": 0,
+                        "date": int(detected_at.timestamp()) + 30,
+                        "contents": "Speculation article",
+                    }
+                ]
+            }
+        }
+
+        mock_rss_resp = MagicMock()
+        mock_rss_resp.status_code = 200
+        mock_rss_resp.text = "<rss version='2.0'><channel></channel></rss>"
+
+        async def fake_get(url: str, **kwargs):
+            if "ISteamNews" in url:
+                assert "feeds=steam_community_announcements" in url
+                return mock_webapi_resp
+            return mock_rss_resp
+
+        mocker.patch("httpx.AsyncClient.get", side_effect=fake_get)
+        item = await fetcher.fetch_latest_patchnotes(detected_at)
+        assert item is None
+

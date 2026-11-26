@@ -158,4 +158,37 @@ diff --git a/game/csgo/steam.inf b/game/csgo/steam.inf
         assert res.client_version == "2000950"
         assert call_count >= 3  # 1. list commits, 2. detail JSON, 3. raw diff
 
+    def test_parse_raw_unified_diff_handles_spaces_renames_and_deletions(self):
+        """Raw unified diff parser should extract filenames cleanly across spaces, renames, and deletions."""
+        diff_text = """diff --git a/game/csgo/old name.txt b/game/csgo/new name.txt
+similarity index 90%
+rename from game/csgo/old name.txt
+rename to game/csgo/new name.txt
+--- a/game/csgo/old name.txt
++++ b/game/csgo/new name.txt
+@@ -1 +1 @@
+-old
++new
+diff --git a/game/csgo/deleted file.cfg b/game/csgo/deleted file.cfg
+deleted file mode 100644
+--- a/game/csgo/deleted file.cfg
++++ /dev/null
+@@ -1 +0,0 @@
+-sv_cheats 0
+diff --git a/game/csgo/added file.txt b/game/csgo/added file.txt
+new file mode 100644
+--- /dev/null
++++ b/game/csgo/added file.txt
+@@ -0,0 +1 @@
++hello
+"""
+        parsed = GitHubDatamineFetcher._parse_raw_unified_diff(diff_text)
+        assert len(parsed) == 3
+        assert parsed[0]["filename"] == "game/csgo/new name.txt"
+        assert parsed[0]["status"] == "renamed"
+        assert parsed[1]["filename"] == "game/csgo/deleted file.cfg"
+        assert parsed[1]["status"] == "removed"
+        assert parsed[2]["filename"] == "game/csgo/added file.txt"
+        assert parsed[2]["status"] == "added"
+
 

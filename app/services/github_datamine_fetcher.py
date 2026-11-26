@@ -104,7 +104,7 @@ class GitHubDatamineFetcher:
             GitHubDatamineResult with parsed steam.inf version and filtered diffs,
             or None if no matching commit found yet.
         """
-        list_url = f"{self.REPO_URL}/commits?per_page=5"
+        list_url = f"{self.REPO_URL}/commits?per_page=10"
 
         try:
             async with httpx.AsyncClient(timeout=self.timeout_seconds) as client:
@@ -184,18 +184,7 @@ class GitHubDatamineFetcher:
                         diff_headers["Accept"] = "application/vnd.github.v3.diff"
                         diff_resp = await client.get(detail_url, headers=diff_headers)
                         if diff_resp.status_code == 200 and diff_resp.text:
-                            parsed_files: list[dict[str, Any]] = []
-                            for chunk in diff_resp.text.split("diff --git a/")[1:]:
-                                lines = chunk.splitlines()
-                                if not lines:
-                                    continue
-                                fn = lines[0].split()[0]
-                                patch_body = "\n".join(lines[1:])
-                                parsed_files.append({
-                                    "filename": fn,
-                                    "patch": patch_body,
-                                    "status": "modified",
-                                })
+                            parsed_files = self._parse_raw_unified_diff(diff_resp.text)
                             if parsed_files:
                                 files = parsed_files
                                 await logger.ainfo(
@@ -241,6 +230,65 @@ class GitHubDatamineFetcher:
             await logger.aerror("github_datamine_error", error=str(e), exc_info=True)
 
         return None
+
+    @staticmethod
+    def _parse_raw_unified_diff(diff_text: str) -> list[dict[str, Any]]:
+        """Parse a raw unified git diff into file dicts handling spaces, renames, and deletions."""
+
+        def _clean_path(raw: str, prefix: str) -> str:
+            val = raw.rstrip("\t").strip()
+            if val.startswith('"') and val.endswith('"'):
+                val = val[1:-1]
+            return val.removeprefix(prefix)
+
+        parsed_files: list[dict[str, Any]] = []
+        for chunk in re.split(r"(?m)^diff --git ", diff_text)[1:]:
+            lines = chunk.splitlines()
+            if not lines:
+                continue
+
+            header_line = lines[0]
+            status = "modified"
+            filename: str | None = None
+            old_filename: str | None = None
+
+            for line in lines[1:12]:
+                if line.startswith("@@"):
+                    break
+                if line.startswith("new file mode "):
+                    status = "added"
+                elif line.startswith("deleted file mode "):
+                    status = "removed"
+                elif line.startswith("rename to "):
+                    status = "renamed"
+                    filename = _clean_path(line[len("rename to "):], "")
+                elif line.startswith("rename from "):
+                    old_filename = _clean_path(line[len("rename from "):], "")
+                elif line.startswith("--- /dev/null"):
+                    status = "added"
+                elif line.startswith("--- "):
+                    old_filename = _clean_path(line[len("--- "):], "a/")
+                elif line.startswith("+++ /dev/null"):
+                    status = "removed"
+                elif line.startswith("+++ "):
+                    filename = _clean_path(line[len("+++ "):], "b/")
+
+            if status == "removed" and old_filename:
+                filename = old_filename
+            elif not filename:
+                match = re.match(r'^"?a/(.+?)"?\s+"?b/(.+?)"?$', header_line.strip())
+                if match:
+                    filename = match.group(1) if status == "removed" else match.group(2)
+                else:
+                    filename = _clean_path(header_line.split()[0], "a/")
+
+            parsed_files.append({
+                "filename": filename,
+                "patch": "\n".join(lines[1:]),
+                "status": status,
+            })
+
+        return parsed_files
 
     @staticmethod
     def _summarize_pak01_patch(patch: str) -> str:

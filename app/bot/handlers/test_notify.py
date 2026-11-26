@@ -34,6 +34,9 @@ async def handle_test(update: Update, context: CallbackContext) -> None:
         if not user:
             await query.answer("Вы не зарегистрированы.", show_alert=True)
             return
+        if not user.is_admin:
+            await query.answer("У вас нет прав доступа.", show_alert=True)
+            return
         
         all_active_users = await user_repo.get_active_users()
 

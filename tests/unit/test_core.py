@@ -135,18 +135,29 @@ class TestDatetimeUtils:
         assert "ч назад" in format_time_ago(now - timedelta(hours=3))
         assert "д назад" in format_time_ago(now - timedelta(days=2))
 
-    def test_quiet_hours_same_day(self) -> None:
-        # 01:00 - 07:00, check if 03:00 is quiet
-        assert is_quiet_hours(
-            "UTC",
-            quiet_start=time(1, 0),
-            quiet_end=time(7, 0),
-        ) or not is_quiet_hours(
-            "UTC",
-            quiet_start=time(1, 0),
-            quiet_end=time(7, 0),
-        )
-        # This is time-dependent, so just verify it doesn't crash
+    def test_quiet_hours_same_day(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        # 01:00 - 07:00: 03:00 should be quiet, 12:00 should not
+        import app.utils.datetime as dt_mod
+
+        class _FakeDatetime(datetime):
+            _mock_now: datetime
+
+            @classmethod
+            def now(cls, tz=None):
+                return cls._mock_now
+
+        _FakeDatetime._mock_now = datetime(2026, 11, 26, 3, 0, tzinfo=timezone.utc)
+        monkeypatch.setattr(dt_mod, "datetime", _FakeDatetime)
+        assert is_quiet_hours("UTC", quiet_start=time(1, 0), quiet_end=time(7, 0)) is True
+
+        _FakeDatetime._mock_now = datetime(2026, 11, 26, 12, 0, tzinfo=timezone.utc)
+        assert is_quiet_hours("UTC", quiet_start=time(1, 0), quiet_end=time(7, 0)) is False
+
+        # Overnight range 23:00 - 07:00
+        _FakeDatetime._mock_now = datetime(2026, 11, 26, 2, 0, tzinfo=timezone.utc)
+        assert is_quiet_hours("UTC", quiet_start=time(23, 0), quiet_end=time(7, 0)) is True
+        _FakeDatetime._mock_now = datetime(2026, 11, 26, 15, 0, tzinfo=timezone.utc)
+        assert is_quiet_hours("UTC", quiet_start=time(23, 0), quiet_end=time(7, 0)) is False
 
     def test_quiet_hours_none_returns_false(self) -> None:
         assert is_quiet_hours("UTC", None, None) is False
